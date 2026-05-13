@@ -1,5 +1,8 @@
 # Claude Poker
 
+[![CI](https://github.com/justanotherspy/poker/actions/workflows/ci.yml/badge.svg)](https://github.com/justanotherspy/poker/actions/workflows/ci.yml)
+[![Deploy](https://github.com/justanotherspy/poker/actions/workflows/deploy.yml/badge.svg)](https://github.com/justanotherspy/poker/actions/workflows/deploy.yml)
+
 A Texas Hold'em table where Claude agents play each other. Built as an MCP server (FastMCP) with a companion web UI, using PokerKit as the game engine.
 
 ## Architecture
@@ -21,7 +24,7 @@ Single Docker image: Bun builds the Next.js frontend at image build time; FastAP
 | Game engine | [PokerKit](https://github.com/uoftcprg/pokerkit) |
 | MCP server | [FastMCP](https://github.com/jlowin/fastmcp) |
 | HTTP API + static serving | [FastAPI](https://fastapi.tiangolo.com) + [uvicorn](https://www.uvicorn.org) |
-| Frontend | [Next.js 14](https://nextjs.org) + TypeScript + Tailwind (static export) |
+| Frontend | [Next.js 16](https://nextjs.org) + TypeScript + Tailwind (static export) |
 | Agents | [Anthropic Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview) |
 | Python tooling | [uv](https://docs.astral.sh/uv/) |
 | Frontend tooling | [Bun](https://bun.sh) |
@@ -29,10 +32,9 @@ Single Docker image: Bun builds the Next.js frontend at image build time; FastAP
 
 ## Local Development
 
-### Python server
-
 ```bash
-uv sync --all-groups          # install deps
+cp .env.example .env   # fill in values
+uv sync --all-groups
 uv run uvicorn poker.server:app --reload --port 8000
 ```
 
@@ -52,33 +54,22 @@ To build the static frontend and serve it from FastAPI:
 make frontend-build   # outputs to src/poker/static/
 ```
 
+### MCP auth in development
+
+The `/mcp` endpoint requires `Authorization: Bearer <key>`. In development, set `MCP_DEV_TOKEN` to any plaintext string in `.env` — the server accepts it directly. To connect Claude Code's `claude-poker-local` MCP server to your local instance, set `POKER_MCP_API_KEY` to the same value.
+
 ### Python checks
 
 ```bash
 make check   # lint (ruff) + typecheck (mypy) + semgrep + test (pytest)
+make e2e     # end-to-end tests — starts a real server on :18765
 ```
 
 ## Docker
 
 ```bash
 make docker-build
-MCP_API_KEY_HASHES=<hash> make docker-run
-# → http://localhost:8000
-```
-
-## API Key Auth
-
-The `/mcp` endpoint requires `Authorization: Bearer <key>`. Keys are stored server-side as SHA-256 hashes in the `MCP_API_KEY_HASHES` environment variable (comma-separated, no plaintext).
-
-Generate a key + hash:
-
-```bash
-python3 -c "
-import hashlib, secrets
-k = secrets.token_urlsafe(32)
-print('KEY (keep this):', k)
-print('HASH (store this):', hashlib.sha256(k.encode()).hexdigest())
-"
+make docker-run   # reads env from .env → http://localhost:8000
 ```
 
 ## Fly.io Deploy
@@ -89,20 +80,5 @@ Deploys automatically on push to `main`. Manual deploy:
 fly deploy --remote-only --app claude-poker
 ```
 
-### First-time setup
-
-```bash
-# Install flyctl
-curl -L https://fly.io/install.sh | sh
-fly auth login
-
-# Create app
-fly apps create claude-poker
-
-# Set API key hash as secret
-fly secrets set MCP_API_KEY_HASHES="<hash>" --app claude-poker
-
-# Create deploy token for GitHub Actions
-fly tokens create deploy --app claude-poker
-# → add as FLY_API_TOKEN in GitHub repo Settings → Secrets → Actions
-```
+**Secrets** (set with `fly secrets set --app claude-poker`):
+- `MCP_API_KEY_HASHES` — comma-separated SHA-256 hashes of API keys (no plaintext)

@@ -2,8 +2,8 @@
 
 ## Workflow
 
-- Always open a **draft PR** for changes (even small ones).
-- Use `gh pr create --draft` when creating PRs.
+- Always open a PR for changes (even small ones).
+- Use the GitHub MCP tools (`mcp__github__create_pull_request`) when creating PRs.
 - Follow the PR template at `.github/PULL_REQUEST_TEMPLATE.md`: Problem + Solution sections only, always reference a Linear ticket (JUS-XX).
 
 ## Libraries
@@ -11,6 +11,7 @@
 - **PokerKit** (`/websites/pokerkit_readthedocs_io_en` on Context7) — poker game simulation, hand evaluation, statistical analysis
 - **FastMCP** — MCP server framework
 - **FastAPI** + **uvicorn** — HTTP API surface for the web UI
+- **Anthropic Managed Agents** — one session per seat; push table events as `user.message` into each running session
 
 ## Tooling
 
@@ -22,17 +23,41 @@
 
 | Target | What it does |
 |--------|-------------|
-| `make test` | Run pytest |
+| `make test` | Run pytest (excludes e2e) |
+| `make e2e` | Run e2e tests (starts a real server on :18765) |
 | `make lint` | Run ruff |
 | `make format` | Run black |
 | `make typecheck` | Run mypy |
 | `make semgrep` | Run semgrep (community edition, `--config auto`) — requires `pipx install semgrep` |
 | `make check` | lint + typecheck + semgrep + test |
-| `make frontend-install` | `bun install` in `frontend/` |
+| `make frontend-install` | `bun install --frozen-lockfile` in `frontend/` |
 | `make frontend-build` | Build Next.js static export into `src/poker/static/` |
-| `make frontend-dev` | Start Next.js dev server |
+| `make frontend-dev` | Start Next.js dev server on :3000 |
 | `make docker-build` | Build Docker image `claude-poker` |
-| `make docker-run` | Run `claude-poker` image on port 8000 (reads `MCP_API_KEY_HASHES` from env) |
+| `make docker-run` | Run `claude-poker` image on port 8000 (reads env from `.env`) |
+
+## Local Development
+
+Copy `.env.example` to `.env` and fill in values before running anything locally.
+
+### Auth in development
+
+The `/mcp` endpoint normally requires a SHA-256-hashed API key via `Authorization: Bearer <key>`. For local dev, set `MCP_DEV_TOKEN` in `.env` to any plaintext string — the server accepts it directly, bypassing hash checks. The e2e tests use this mechanism automatically.
+
+The `claude-poker-local` MCP server in `.mcp.json` connects to `http://localhost:8000/mcp` using `POKER_MCP_API_KEY` from your environment. Set that to your `MCP_DEV_TOKEN` value when working locally.
+
+## MCP Servers
+
+Configured in `.mcp.json`:
+
+| Server | Purpose |
+|--------|---------|
+| `github` | GitHub API — PRs, issues, files, CI (requires `GITHUB_TOKEN`) |
+| `linear` | Read/update Linear issues (requires `LINEAR_API_KEY`) |
+| `context7` | Fetch current library docs via `resolve-library-id` + `query-docs` |
+| `fly` | Manage the Fly.io deployment (check status, set secrets, view logs) |
+| `claude-poker` | Talk to the live game at `claude-poker.fly.dev/mcp` (requires `POKER_MCP_API_KEY`) |
+| `claude-poker-local` | Talk to a local server at `localhost:8000/mcp` (set `POKER_MCP_API_KEY` to your `MCP_DEV_TOKEN`) |
 
 ## Fly.io Deployment
 
@@ -41,18 +66,10 @@
 - Deploys automatically on push to `main` via `.github/workflows/deploy.yml`
 - Requires `FLY_API_TOKEN` secret in GitHub repo settings
 
-**Fly MCP server** — flyctl ships a built-in MCP server (configured in `.mcp.json`). Use it to manage the deployment: check status, set secrets, view logs, etc. Requires `flyctl` installed (`curl -L https://fly.io/install.sh | sh`).
-
 **Secrets** (set with `fly secrets set --app claude-poker`):
 - `MCP_API_KEY_HASHES` — comma-separated SHA-256 hashes of MCP API keys (no plaintext)
 
-**First-time setup**:
-```bash
-fly apps create claude-poker
-python3 -c "import hashlib,secrets; k=secrets.token_urlsafe(32); print('KEY:',k); print('HASH:',hashlib.sha256(k.encode()).hexdigest())"
-fly secrets set MCP_API_KEY_HASHES="<hash>" --app claude-poker
-fly tokens create deploy --app claude-poker  # → add as FLY_API_TOKEN GitHub secret
-```
+Manual deploy: `flyctl deploy --remote-only`
 
 ## Linear
 
