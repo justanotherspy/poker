@@ -2,7 +2,7 @@
 
 ## Workflow
 
-- Always open a **draft PR** for changes (even small ones).
+- Always open a PR for changes (even small ones).
 - Use the GitHub MCP tools (`mcp__github__create_pull_request`) when creating PRs.
 - Follow the PR template at `.github/PULL_REQUEST_TEMPLATE.md`: Problem + Solution sections only, always reference a Linear ticket (JUS-XX).
 
@@ -52,6 +52,7 @@ Configured in `.mcp.json`:
 
 | Server | Purpose |
 |--------|---------|
+| `github` | GitHub API — PRs, issues, files, CI (requires `GITHUB_TOKEN`) |
 | `linear` | Read/update Linear issues (requires `LINEAR_API_KEY`) |
 | `context7` | Fetch current library docs via `resolve-library-id` + `query-docs` |
 | `fly` | Manage the Fly.io deployment (check status, set secrets, view logs) |
