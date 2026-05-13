@@ -9,3 +9,9 @@ dist/
 .env
 .env.*
 !.env.example
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/next-env.d.ts
