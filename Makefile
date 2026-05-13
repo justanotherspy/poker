@@ -35,4 +35,4 @@ docker-build:
 	docker build -t claude-poker .
 
 docker-run:
-	docker run -e MCP_API_KEY_HASHES=$${MCP_API_KEY_HASHES} -p 8000:8000 claude-poker
+	docker run --env-file .env -p 8000:8000 claude-poker
