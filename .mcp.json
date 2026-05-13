@@ -11,12 +11,18 @@
       "type": "stdio",
       "command": "npx",
       "args": ["-y", "@upstash/context7-mcp"]
-    }
-  },
+    },
     "fly": {
       "type": "stdio",
       "command": "fly",
       "args": ["mcp", "server"]
+    },
+    "claude-poker": {
+      "type": "http",
+      "url": "https://claude-poker.fly.dev/mcp",
+      "headers": {
+        "Authorization": "Bearer ${POKER_MCP_API_KEY}"
+      }
     }
   }
 }
