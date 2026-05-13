@@ -24,17 +24,27 @@
 | Target | What it does |
 |--------|-------------|
 | `make test` | Run pytest (excludes e2e) |
-| `make e2e` | Run e2e tests (starts real server) |
+| `make e2e` | Run e2e tests (starts a real server on :18765) |
 | `make lint` | Run ruff |
 | `make format` | Run black |
 | `make typecheck` | Run mypy |
 | `make semgrep` | Run semgrep (community edition, `--config auto`) — requires `pipx install semgrep` |
 | `make check` | lint + typecheck + semgrep + test |
-| `make frontend-install` | `bun install` in `frontend/` |
+| `make frontend-install` | `bun install --frozen-lockfile` in `frontend/` |
 | `make frontend-build` | Build Next.js static export into `src/poker/static/` |
-| `make frontend-dev` | Start Next.js dev server |
+| `make frontend-dev` | Start Next.js dev server on :3000 |
 | `make docker-build` | Build Docker image `claude-poker` |
 | `make docker-run` | Run `claude-poker` image on port 8000 (reads env from `.env`) |
+
+## Local Development
+
+Copy `.env.example` to `.env` and fill in values before running anything locally.
+
+### Auth in development
+
+The `/mcp` endpoint normally requires a SHA-256-hashed API key via `Authorization: Bearer <key>`. For local dev, set `MCP_DEV_TOKEN` in `.env` to any plaintext string — the server accepts it directly, bypassing hash checks. The e2e tests use this mechanism automatically.
+
+The `claude-poker-local` MCP server in `.mcp.json` connects to `http://localhost:8000/mcp` using `POKER_MCP_API_KEY` from your environment. Set that to your `MCP_DEV_TOKEN` value when working locally.
 
 ## MCP Servers
 
@@ -46,7 +56,7 @@ Configured in `.mcp.json`:
 | `context7` | Fetch current library docs via `resolve-library-id` + `query-docs` |
 | `fly` | Manage the Fly.io deployment (check status, set secrets, view logs) |
 | `claude-poker` | Talk to the live game at `claude-poker.fly.dev/mcp` (requires `POKER_MCP_API_KEY`) |
-| `claude-poker-local` | Talk to a local server at `localhost:8000/mcp` |
+| `claude-poker-local` | Talk to a local server at `localhost:8000/mcp` (set `POKER_MCP_API_KEY` to your `MCP_DEV_TOKEN`) |
 
 ## Fly.io Deployment
 

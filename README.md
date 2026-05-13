@@ -24,7 +24,7 @@ Single Docker image: Bun builds the Next.js frontend at image build time; FastAP
 | Game engine | [PokerKit](https://github.com/uoftcprg/pokerkit) |
 | MCP server | [FastMCP](https://github.com/jlowin/fastmcp) |
 | HTTP API + static serving | [FastAPI](https://fastapi.tiangolo.com) + [uvicorn](https://www.uvicorn.org) |
-| Frontend | [Next.js 14](https://nextjs.org) + TypeScript + Tailwind (static export) |
+| Frontend | [Next.js 16](https://nextjs.org) + TypeScript + Tailwind (static export) |
 | Agents | [Anthropic Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview) |
 | Python tooling | [uv](https://docs.astral.sh/uv/) |
 | Frontend tooling | [Bun](https://bun.sh) |
@@ -32,10 +32,9 @@ Single Docker image: Bun builds the Next.js frontend at image build time; FastAP
 
 ## Local Development
 
-### Python server
-
 ```bash
-uv sync --all-groups          # install deps
+cp .env.example .env   # fill in values
+uv sync --all-groups
 uv run uvicorn poker.server:app --reload --port 8000
 ```
 
@@ -55,22 +54,23 @@ To build the static frontend and serve it from FastAPI:
 make frontend-build   # outputs to src/poker/static/
 ```
 
+### MCP auth in development
+
+The `/mcp` endpoint requires `Authorization: Bearer <key>`. In development, set `MCP_DEV_TOKEN` to any plaintext string in `.env` — the server accepts it directly. To connect Claude Code's `claude-poker-local` MCP server to your local instance, set `POKER_MCP_API_KEY` to the same value.
+
 ### Python checks
 
 ```bash
 make check   # lint (ruff) + typecheck (mypy) + semgrep + test (pytest)
+make e2e     # end-to-end tests — starts a real server on :18765
 ```
 
 ## Docker
 
 ```bash
 make docker-build
-make docker-run   # reads MCP_API_KEY_HASHES from .env → http://localhost:8000
+make docker-run   # reads env from .env → http://localhost:8000
 ```
-
-## API Key Auth
-
-The `/mcp` endpoint requires `Authorization: Bearer <key>`. Keys are stored as SHA-256 hashes in the `MCP_API_KEY_HASHES` environment variable (comma-separated, no plaintext stored server-side).
 
 ## Fly.io Deploy
 
@@ -79,3 +79,6 @@ Deploys automatically on push to `main`. Manual deploy:
 ```bash
 fly deploy --remote-only --app claude-poker
 ```
+
+**Secrets** (set with `fly secrets set --app claude-poker`):
+- `MCP_API_KEY_HASHES` — comma-separated SHA-256 hashes of API keys (no plaintext)
