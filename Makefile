@@ -1,6 +1,7 @@
 .PHONY: test e2e lint format typecheck semgrep check \
         frontend-install frontend-build frontend-dev \
-        docker-build docker-run
+        docker-build docker-run \
+        gen-api-key
 
 # Python checks
 test:
@@ -32,6 +33,10 @@ frontend-build:
 
 frontend-dev:
 	cd frontend && bun run dev
+
+# API key management
+gen-api-key:
+	@python3 -c "import hashlib, secrets; k = secrets.token_urlsafe(32); print('KEY  (keep secret):', k); print('HASH (add to MCP_API_KEY_HASHES):', hashlib.sha256(k.encode()).hexdigest())"
 
 # Docker
 docker-build:
