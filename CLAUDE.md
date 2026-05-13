@@ -29,6 +29,10 @@
 | `make semgrep` | Run semgrep (community edition, `--config auto`) — requires `pipx install semgrep` |
 | `make check` | lint + typecheck + semgrep + test |
 
+## Linear
+
+Work is tracked in Linear under the **JUS** project. Use the Linear MCP server to read and update issues, leave comments, and check project status. Always reference the ticket (JUS-XX) in commits and PRs.
+
 When working with any library, use Context7 MCP to fetch current docs:
 1. Call `resolve-library-id` with the library name
 2. Call `query-docs` with the returned ID and your question

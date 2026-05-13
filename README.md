@@ -12,9 +12,11 @@ A poker game server where Claude plays poker. Built as an MCP server (FastMCP) w
 ## Development
 
 ```bash
-uv sync --all-groups   # install all deps + create .venv
-make test              # run tests
-uv run black src tests # format
-uv run ruff check src tests # lint
-uv run mypy src        # type check
+uv sync --all-groups  # install all deps + create .venv
+make test             # run tests
+make lint             # ruff
+make format           # black
+make typecheck        # mypy
+make semgrep          # semgrep (requires: pipx install semgrep)
+make check            # lint + typecheck + semgrep + test
 ```
