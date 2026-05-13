@@ -1,4 +1,4 @@
-.PHONY: test lint format typecheck check
+.PHONY: test lint format typecheck semgrep check
 
 test:
 	uv run pytest
@@ -12,4 +12,7 @@ format:
 typecheck:
 	uv run mypy src
 
-check: lint typecheck test
+semgrep:
+	semgrep --config auto src
+
+check: lint typecheck semgrep test

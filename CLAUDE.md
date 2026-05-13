@@ -26,7 +26,8 @@
 | `make lint` | Run ruff |
 | `make format` | Run black |
 | `make typecheck` | Run mypy |
-| `make check` | lint + typecheck + test |
+| `make semgrep` | Run semgrep (community edition, `--config auto`) — requires `pipx install semgrep` |
+| `make check` | lint + typecheck + semgrep + test |
 
 When working with any library, use Context7 MCP to fetch current docs:
 1. Call `resolve-library-id` with the library name

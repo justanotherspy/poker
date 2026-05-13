@@ -28,5 +28,10 @@ jobs:
       - name: Mypy
         run: uv run mypy src
 
+      - name: Semgrep
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: auto
+
       - name: Tests
         run: uv run pytest
