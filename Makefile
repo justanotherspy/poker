@@ -1,10 +1,13 @@
-.PHONY: test lint format typecheck semgrep check \
+.PHONY: test e2e lint format typecheck semgrep check \
         frontend-install frontend-build frontend-dev \
         docker-build docker-run
 
 # Python checks
 test:
-	uv run pytest
+	uv run pytest -m "not e2e"
+
+e2e:
+	uv run pytest -m e2e -v
 
 lint:
 	uv run ruff check src tests
