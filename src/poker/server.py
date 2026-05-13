@@ -4,13 +4,11 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastmcp import FastMCP
 
-from poker.auth import ApiKeyMiddleware
+from poker.auth import HashedApiKeyVerifier
+
+mcp = FastMCP("poker-server", auth=HashedApiKeyVerifier())
 
 app = FastAPI()
-app.add_middleware(ApiKeyMiddleware)
-
-mcp = FastMCP("poker-server")
-
 app.mount("/mcp", mcp.http_app())
 
 
