@@ -3,7 +3,7 @@
 ## Workflow
 
 - Always open a **draft PR** for changes (even small ones).
-- Use `gh pr create --draft` when creating PRs.
+- Use the GitHub MCP tools (`mcp__github__create_pull_request`) when creating PRs.
 - Follow the PR template at `.github/PULL_REQUEST_TEMPLATE.md`: Problem + Solution sections only, always reference a Linear ticket (JUS-XX).
 
 ## Libraries
@@ -11,6 +11,7 @@
 - **PokerKit** (`/websites/pokerkit_readthedocs_io_en` on Context7) — poker game simulation, hand evaluation, statistical analysis
 - **FastMCP** — MCP server framework
 - **FastAPI** + **uvicorn** — HTTP API surface for the web UI
+- **Anthropic Managed Agents** — one session per seat; push table events as `user.message` into each running session
 
 ## Tooling
 
@@ -22,7 +23,8 @@
 
 | Target | What it does |
 |--------|-------------|
-| `make test` | Run pytest |
+| `make test` | Run pytest (excludes e2e) |
+| `make e2e` | Run e2e tests (starts real server) |
 | `make lint` | Run ruff |
 | `make format` | Run black |
 | `make typecheck` | Run mypy |
@@ -32,7 +34,19 @@
 | `make frontend-build` | Build Next.js static export into `src/poker/static/` |
 | `make frontend-dev` | Start Next.js dev server |
 | `make docker-build` | Build Docker image `claude-poker` |
-| `make docker-run` | Run `claude-poker` image on port 8000 (reads `MCP_API_KEY_HASHES` from env) |
+| `make docker-run` | Run `claude-poker` image on port 8000 (reads env from `.env`) |
+
+## MCP Servers
+
+Configured in `.mcp.json`:
+
+| Server | Purpose |
+|--------|---------|
+| `linear` | Read/update Linear issues (requires `LINEAR_API_KEY`) |
+| `context7` | Fetch current library docs via `resolve-library-id` + `query-docs` |
+| `fly` | Manage the Fly.io deployment (check status, set secrets, view logs) |
+| `claude-poker` | Talk to the live game at `claude-poker.fly.dev/mcp` (requires `POKER_MCP_API_KEY`) |
+| `claude-poker-local` | Talk to a local server at `localhost:8000/mcp` |
 
 ## Fly.io Deployment
 
@@ -41,18 +55,10 @@
 - Deploys automatically on push to `main` via `.github/workflows/deploy.yml`
 - Requires `FLY_API_TOKEN` secret in GitHub repo settings
 
-**Fly MCP server** — flyctl ships a built-in MCP server (configured in `.mcp.json`). Use it to manage the deployment: check status, set secrets, view logs, etc. Requires `flyctl` installed (`curl -L https://fly.io/install.sh | sh`).
-
 **Secrets** (set with `fly secrets set --app claude-poker`):
 - `MCP_API_KEY_HASHES` — comma-separated SHA-256 hashes of MCP API keys (no plaintext)
 
-**First-time setup**:
-```bash
-fly apps create claude-poker
-python3 -c "import hashlib,secrets; k=secrets.token_urlsafe(32); print('KEY:',k); print('HASH:',hashlib.sha256(k.encode()).hexdigest())"
-fly secrets set MCP_API_KEY_HASHES="<hash>" --app claude-poker
-fly tokens create deploy --app claude-poker  # → add as FLY_API_TOKEN GitHub secret
-```
+Manual deploy: `flyctl deploy --remote-only`
 
 ## Linear
 
