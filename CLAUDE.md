@@ -28,6 +28,31 @@
 | `make typecheck` | Run mypy |
 | `make semgrep` | Run semgrep (community edition, `--config auto`) — requires `pipx install semgrep` |
 | `make check` | lint + typecheck + semgrep + test |
+| `make frontend-install` | `bun install` in `frontend/` |
+| `make frontend-build` | Build Next.js static export into `src/poker/static/` |
+| `make frontend-dev` | Start Next.js dev server |
+| `make docker-build` | Build Docker image `claude-poker` |
+| `make docker-run` | Run `claude-poker` image on port 8000 (reads `MCP_API_KEY_HASHES` from env) |
+
+## Fly.io Deployment
+
+- **App**: `claude-poker` | **Region**: `iad`
+- **Endpoints**: `/` (web UI), `/mcp` (MCP — auth required), `/api/health` (health check)
+- Deploys automatically on push to `main` via `.github/workflows/deploy.yml`
+- Requires `FLY_API_TOKEN` secret in GitHub repo settings
+
+**Fly MCP server** — flyctl ships a built-in MCP server (configured in `.mcp.json`). Use it to manage the deployment: check status, set secrets, view logs, etc. Requires `flyctl` installed (`curl -L https://fly.io/install.sh | sh`).
+
+**Secrets** (set with `fly secrets set --app claude-poker`):
+- `MCP_API_KEY_HASHES` — comma-separated SHA-256 hashes of MCP API keys (no plaintext)
+
+**First-time setup**:
+```bash
+fly apps create claude-poker
+python3 -c "import hashlib,secrets; k=secrets.token_urlsafe(32); print('KEY:',k); print('HASH:',hashlib.sha256(k.encode()).hexdigest())"
+fly secrets set MCP_API_KEY_HASHES="<hash>" --app claude-poker
+fly tokens create deploy --app claude-poker  # → add as FLY_API_TOKEN GitHub secret
+```
 
 ## Linear
 
