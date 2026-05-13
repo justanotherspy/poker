@@ -4,6 +4,8 @@
       "Bash(git:*)",
       "Bash(uv:*)",
       "Bash(gh:*)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs",
       "mcp__linear__get_attachment",
       "mcp__linear__get_document",
       "mcp__linear__get_issue",
