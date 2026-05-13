@@ -12,4 +12,8 @@ class HashedApiKeyVerifier(AuthProvider):
     async def verify_token(self, token: str) -> AccessToken | None:
         if hashlib.sha256(token.encode()).hexdigest() in _HASHED_KEYS:
             return AccessToken(token=token, client_id="api-key", scopes=[])
+        # Plaintext token accepted only when MCP_DEV_TOKEN is set (local dev only).
+        dev_token = os.getenv("MCP_DEV_TOKEN")
+        if dev_token and token == dev_token:
+            return AccessToken(token=token, client_id="dev", scopes=[])
         return None

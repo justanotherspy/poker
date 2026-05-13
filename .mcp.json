@@ -23,6 +23,13 @@
       "headers": {
         "Authorization": "Bearer ${POKER_MCP_API_KEY}"
       }
+    },
+    "claude-poker-local": {
+      "type": "http",
+      "url": "http://localhost:8000/mcp",
+      "headers": {
+        "Authorization": "Bearer ${POKER_MCP_API_KEY}"
+      }
     }
   }
 }
