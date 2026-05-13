@@ -18,6 +18,16 @@
 - **Python 3.13+**
 - **black** — formatting | **ruff** — linting | **mypy** (strict) — type checking | **pytest** — tests
 
+## Makefile
+
+| Target | What it does |
+|--------|-------------|
+| `make test` | Run pytest |
+| `make lint` | Run ruff |
+| `make format` | Run black |
+| `make typecheck` | Run mypy |
+| `make check` | lint + typecheck + test |
+
 When working with any library, use Context7 MCP to fetch current docs:
 1. Call `resolve-library-id` with the library name
 2. Call `query-docs` with the returned ID and your question
