@@ -29,7 +29,7 @@
 | `make lint` | Run ruff |
 | `make format` | Run black |
 | `make typecheck` | Run mypy |
-| `make semgrep` | Run semgrep (community edition, `--config auto`) — requires `pipx install semgrep` |
+| `make semgrep` | Run semgrep (community edition, `--config auto`) |
 | `make check` | lint + typecheck + semgrep + test |
 | `make frontend-install` | `bun install --frozen-lockfile` in `frontend/` |
 | `make frontend-build` | Build Next.js static export into `src/poker/static/` |
