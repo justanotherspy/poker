@@ -22,7 +22,7 @@
     },
     "fly": {
       "type": "stdio",
-      "command": "fly",
+      "command": "/root/.fly/bin/fly",
       "args": ["mcp", "server"]
     },
     "claude-poker": {
