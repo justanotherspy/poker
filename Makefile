@@ -22,11 +22,14 @@ typecheck:
 semgrep:
 	semgrep --config auto src
 
-check: lint typecheck semgrep test
+check: lint typecheck semgrep test frontend-typecheck frontend-build
 
 # Frontend (Bun + Next.js)
 frontend-install:
 	cd frontend && bun install --frozen-lockfile
+
+frontend-typecheck:
+	cd frontend && bun run lint
 
 frontend-build:
 	cd frontend && bun run build
