@@ -76,8 +76,11 @@ Manual deploy: `flyctl deploy --remote-only`
 
 ## Linear
 
-Work is tracked in Linear under the **JUS** project. Use the Linear MCP server to read and update issues, leave comments, and check project status. Always reference the ticket (JUS-XX) in commits and PRs.
+Work is tracked in Linear under the **Justanotherspy** team, in the **Poker** project. Always use the Poker project when creating or referencing Linear issues for this repo. Use the Linear MCP server to read and update issues, leave comments, and check project status. Always reference the ticket (JUS-XX) in commits and PRs.
 
 When working with any library, use Context7 MCP to fetch current docs:
 1. Call `resolve-library-id` with the library name
 2. Call `query-docs` with the returned ID and your question
+
+Known library IDs:
+- **PokerKit**: `/websites/pokerkit_readthedocs_io_en`
