@@ -2,6 +2,7 @@
 
 ## Workflow
 
+- Always run `make check` before opening a PR.
 - Always open a PR for changes (even small ones).
 - Use the GitHub MCP tools (`mcp__github__create_pull_request`) when creating PRs.
 - Follow the PR template at `.github/PULL_REQUEST_TEMPLATE.md`: Problem + Solution sections only, always reference a Linear ticket (JUS-XX).
@@ -28,9 +29,10 @@
 | `make lint` | Run ruff |
 | `make format` | Run black |
 | `make typecheck` | Run mypy |
-| `make semgrep` | Run semgrep (community edition, `--config auto`) — requires `pipx install semgrep` |
-| `make check` | lint + typecheck + semgrep + test |
+| `make semgrep` | Run semgrep (community edition, `--config auto`) |
+| `make check` | lint + typecheck + semgrep + test + frontend-typecheck + frontend-build |
 | `make frontend-install` | `bun install --frozen-lockfile` in `frontend/` |
+| `make frontend-typecheck` | Run `tsc --noEmit` in `frontend/` |
 | `make frontend-build` | Build Next.js static export into `src/poker/static/` |
 | `make frontend-dev` | Start Next.js dev server on :3000 |
 | `make docker-build` | Build Docker image `claude-poker` |

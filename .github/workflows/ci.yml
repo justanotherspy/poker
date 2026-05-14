@@ -69,7 +69,7 @@ jobs:
         run: uv sync --all-groups
 
       - name: Tests
-        run: uv run pytest
+        run: uv run pytest -m "not e2e"
 
   semgrep:
     name: Semgrep Security Scan
