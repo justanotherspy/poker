@@ -7,6 +7,7 @@ dependencies = [
     "pokerkit",
     "fastapi",
     "uvicorn[standard]",
+    "redis>=5.0",
 ]
 
 [dependency-groups]
@@ -16,6 +17,7 @@ dev = [
     "black",
     "mypy",
     "ruff",
+    "fakeredis>=2.0",
 ]
 
 [build-system]
