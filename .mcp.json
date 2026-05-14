@@ -38,6 +38,11 @@
       "headers": {
         "Authorization": "Bearer ${POKER_MCP_API_KEY}"
       }
+    },
+    "excalidraw": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "excalidraw-mcp"]
     }
   }
 }
