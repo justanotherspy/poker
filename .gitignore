@@ -16,3 +16,6 @@ frontend/.next/
 frontend/out/
 frontend/next-env.d.ts
 frontend/tsconfig.tsbuildinfo
+
+# MCP server logs
+*.log
