@@ -45,7 +45,8 @@ async def health() -> dict[str, str]:
 
 @_api.post("/api/game")
 async def api_create_game(req: CreateGameRequest) -> dict[str, Any]:
-    g = _game.create_game(req.seat_count, req.starting_stack)
+    with store.lock():
+        g = _game.create_game(req.seat_count, req.starting_stack)
     view = g.get_view(1)
     return {
         "seat_count": g.seat_count,
@@ -76,15 +77,16 @@ async def api_get_state(seat_id: int) -> dict[str, Any]:
 
 @_api.post("/api/game/act")
 async def api_act(req: ActRequest) -> dict[str, Any]:
-    g = _game.get_game()
-    if g is None:
-        raise HTTPException(status_code=404, detail="No active game.")
-    g.bluffs[req.seat_id] = req.bluff_declared
-    try:
-        result = g.apply_action(req.seat_id, req.action, req.amount)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    store.save(g.to_dict())
+    with store.lock():
+        g = _game.get_game()
+        if g is None:
+            raise HTTPException(status_code=404, detail="No active game.")
+        g.bluffs[req.seat_id] = req.bluff_declared
+        try:
+            result = g.apply_action(req.seat_id, req.action, req.amount)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        store.save(g.to_dict())
     return {"result": result}
 
 
@@ -101,12 +103,14 @@ async def api_say(req: SayRequest) -> dict[str, str]:
 
 @_api.post("/api/game/showdown")
 async def api_showdown() -> dict[str, Any]:
-    g = _game.get_game()
-    if g is None:
-        raise HTTPException(status_code=404, detail="No active game.")
-    if not g.needs_showdown():
-        raise HTTPException(status_code=422, detail="No showdown in progress.")
-    g.advance_showdown()
+    with store.lock():
+        g = _game.get_game()
+        if g is None:
+            raise HTTPException(status_code=404, detail="No active game.")
+        if not g.needs_showdown():
+            raise HTTPException(status_code=422, detail="No showdown in progress.")
+        g.advance_showdown()
+        store.save(g.to_dict())
     view = g.get_view(1)
     return {"phase": view.phase, "needs_showdown": g.needs_showdown()}
 
@@ -119,7 +123,8 @@ async def api_showdown() -> dict[str, Any]:
 @mcp.tool
 def create_game(seat_count: int = 2, starting_stack: int = 1000) -> dict[str, Any]:
     """Start a new heads-up poker game. Deals hole cards to all seats."""
-    g = _game.create_game(seat_count, starting_stack)
+    with store.lock():
+        g = _game.create_game(seat_count, starting_stack)
     view = g.get_view(1)
     return {
         "seat_count": g.seat_count,
@@ -158,15 +163,16 @@ def act(
     table_chat: int | None = None,
 ) -> dict[str, Any]:
     """Make a poker action. seat_id is 1-indexed. bluff_declared is required."""
-    g = _game.get_game()
-    if g is None:
-        return {"error": "No active game."}
-    g.bluffs[seat_id] = bluff_declared
-    try:
-        result = g.apply_action(seat_id, action, amount)
-    except ValueError as exc:
-        return {"error": str(exc)}
-    store.save(g.to_dict())
+    with store.lock():
+        g = _game.get_game()
+        if g is None:
+            return {"error": "No active game."}
+        g.bluffs[seat_id] = bluff_declared
+        try:
+            result = g.apply_action(seat_id, action, amount)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        store.save(g.to_dict())
     response: dict[str, Any] = {"result": result}
     if table_chat is not None:
         phrase = _game.PHRASES.get(table_chat)

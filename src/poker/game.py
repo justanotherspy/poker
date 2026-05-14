@@ -110,15 +110,21 @@ class GameState:
         )
 
     def _advance_board(self) -> None:
-        """Burn and deal board cards after a betting round ends."""
+        """Burn and deal board cards until no more are pending.
+
+        Uses a single interleaved loop so all-in run-outs across multiple
+        streets (flop → turn → river with no intervening betting) complete
+        in one call.
+        """
         s = self._state
-        while s.can_burn_card():
-            s.burn_card()
-            self._action_log.append({"type": "burn"})
-        while s.can_deal_board():
-            card = repr(s.deck_cards[0])
-            s.deal_board(card)
-            self._action_log.append({"type": "deal_board", "card": card})
+        while s.can_burn_card() or s.can_deal_board():
+            if s.can_burn_card():
+                s.burn_card()
+                self._action_log.append({"type": "burn"})
+            elif s.can_deal_board():
+                card = repr(s.deck_cards[0])
+                s.deal_board(card)
+                self._action_log.append({"type": "deal_board", "card": card})
 
     def apply_action(
         self,
@@ -165,6 +171,10 @@ class GameState:
 
     def advance_showdown(self) -> None:
         self._state.show_or_muck_hole_cards(True)
+        self._action_log.append({"type": "show"})
+        # After all showdowns are drained the board run-out (for all-in hands)
+        # may become available.
+        self._advance_board()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -189,6 +199,8 @@ class GameState:
                 state.burn_card()
             elif t == "deal_board":
                 state.deal_board(entry["card"])
+            elif t == "show":
+                state.show_or_muck_hole_cards(True)
             elif t == "fold":
                 state.fold()
             elif t in ("call", "check"):
@@ -200,9 +212,10 @@ class GameState:
         return g
 
 
-def create_game(seat_count: int = 2, starting_stack: int = 1000) -> GameState:
+def create_game(seat_count: int = 2, starting_stack: int = 1000) -> "GameState":
     from poker import store
 
+    store.clear()  # remove any previous game's state key from Redis
     state = _make_state(seat_count, starting_stack)
     game_id = str(uuid.uuid4())
     action_log: list[dict[str, Any]] = []
@@ -215,7 +228,7 @@ def create_game(seat_count: int = 2, starting_stack: int = 1000) -> GameState:
     return g
 
 
-def get_game() -> GameState | None:
+def get_game() -> "GameState | None":
     from poker import store
 
     d = store.load()
