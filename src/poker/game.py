@@ -102,9 +102,7 @@ class GameState:
                 raise ValueError("Hand is over.")
             actor_1idx = (s.actor_index + 1) if s.actor_index is not None else None
             if actor_1idx != seat_id:
-                raise ValueError(
-                    f"Not your turn. Current actor: seat {actor_1idx}."
-                )
+                raise ValueError(f"Not your turn. Current actor: seat {actor_1idx}.")
             if action == "fold":
                 if not s.can_fold():
                     raise ValueError("Cannot fold now.")
