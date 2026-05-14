@@ -2,6 +2,7 @@
 
 ## Workflow
 
+- Always run `make check` before opening a PR.
 - Always open a PR for changes (even small ones).
 - Use the GitHub MCP tools (`mcp__github__create_pull_request`) when creating PRs.
 - Follow the PR template at `.github/PULL_REQUEST_TEMPLATE.md`: Problem + Solution sections only, always reference a Linear ticket (JUS-XX).
