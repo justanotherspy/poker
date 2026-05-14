@@ -58,6 +58,7 @@ Configured in `.mcp.json`:
 | `fly` | Manage the Fly.io deployment (check status, set secrets, view logs) |
 | `claude-poker` | Talk to the live game at `claude-poker.fly.dev/mcp` (requires `POKER_MCP_API_KEY`) |
 | `claude-poker-local` | Talk to a local server at `localhost:8000/mcp` (set `POKER_MCP_API_KEY` to your `MCP_DEV_TOKEN`) |
+| `excalidraw` | Create and manipulate Excalidraw diagrams (elements, scenes, grouping, alignment) |
 
 ## Fly.io Deployment
 
