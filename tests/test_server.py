@@ -1,17 +1,19 @@
 import asyncio
+from unittest.mock import patch
 
+import fakeredis
 import pytest
 from starlette.testclient import TestClient
 
-import poker.game as game_module
+import poker.store as store_module
 from poker.server import _api, mcp
 
 
 @pytest.fixture(autouse=True)
-def reset_singleton() -> None:
-    game_module._active_game = None
-    yield
-    game_module._active_game = None
+def fake_redis() -> fakeredis.FakeRedis:  # type: ignore[type-arg]
+    r: fakeredis.FakeRedis = fakeredis.FakeRedis(decode_responses=True)  # type: ignore[type-arg]
+    with patch.object(store_module, "_client", return_value=r):
+        yield r
 
 
 @pytest.fixture
@@ -143,6 +145,19 @@ def test_rest_act_raise_missing_amount(client: TestClient) -> None:
         json={"seat_id": actor, "action": "raise", "bluff_declared": False},
     )
     assert resp.status_code == 422
+
+
+def test_rest_act_persists_to_redis(client: TestClient) -> None:
+    client.post("/api/game", json={})
+    actor = client.get("/api/game/state/1").json()["current_actor"]
+    client.post(
+        "/api/game/act",
+        json={"seat_id": actor, "action": "fold", "bluff_declared": False},
+    )
+    # A second call to get state should reflect the updated game from Redis
+    resp = client.get(f"/api/game/state/{actor}")
+    assert resp.status_code == 200
+    assert resp.json()["phase"] == "ended"
 
 
 # ---------------------------------------------------------------------------

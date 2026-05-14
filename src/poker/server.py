@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from starlette.types import Receive, Scope, Send
 
 from poker import game as _game
+from poker import store
 from poker.auth import HashedApiKeyVerifier
 
 mcp = FastMCP("poker-server", auth=HashedApiKeyVerifier())
@@ -83,6 +84,7 @@ async def api_act(req: ActRequest) -> dict[str, Any]:
         result = g.apply_action(req.seat_id, req.action, req.amount)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    store.save(g.to_dict())
     return {"result": result}
 
 
@@ -164,6 +166,7 @@ def act(
         result = g.apply_action(seat_id, action, amount)
     except ValueError as exc:
         return {"error": str(exc)}
+    store.save(g.to_dict())
     response: dict[str, Any] = {"result": result}
     if table_chat is not None:
         phrase = _game.PHRASES.get(table_chat)
