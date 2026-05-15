@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Poker — wireframes</title>
+
+  <link rel="stylesheet" href="ds/colors_and_type.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&family=Kalam:wght@300;400;700&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --ink:      #1A1814;     /* primary "pen" */
+      --ink-soft: #4a4640;     /* secondary "pen" */
+      --paper:    #F5F2EE;
+      --paper-2:  #EDEAE5;
+      --paper-3:  #E0DCD5;
+      --rule:     #B8B2AA;
+      --accent:   #A85C3A;
+      --hand:     'Caveat', 'Kalam', cursive;
+      --hand-2:   'Kalam', 'Caveat', cursive;
+      --serif:    'DM Serif Display', Georgia, serif;
+      --sans:     -apple-system, 'Helvetica Neue', Arial, sans-serif;
+      --mono:     'SFMono-Regular', Consolas, monospace;
+    }
+    html, body { background: var(--paper); margin: 0; }
+
+    /* ── sketchy utilities, scoped to .wf wrappers ──────────────── */
+    .wf, .wf * { box-sizing: border-box; }
+    .wf { font-family: var(--hand-2); color: var(--ink); position: relative; }
+
+    /* Sketchy hand-drawn box — uses a roughened SVG via filter */
+    .wf .box {
+      border: 1.5px solid var(--ink);
+      border-radius: 6px;
+      background: var(--paper);
+      position: relative;
+    }
+    .wf .box--dash { border-style: dashed; border-width: 1.25px; }
+    .wf .box--soft { border-color: var(--ink-soft); border-width: 1px; }
+    .wf .box--fill { background: var(--paper-2); }
+    .wf .box--accent { border-color: var(--accent); }
+    .wf .box--accent-strap::before {
+      content: ""; position: absolute; top: -1.5px; left: -1.5px; right: -1.5px;
+      height: 2.5px; background: var(--accent); border-radius: 6px 6px 0 0;
+    }
+
+    /* Hand text */
+    .wf .hand   { font-family: var(--hand); font-weight: 600; color: var(--ink); }
+    .wf .hand--sm { font-size: 14px; line-height: 1.1; }
+    .wf .hand--md { font-size: 18px; line-height: 1.1; }
+    .wf .hand--lg { font-size: 26px; line-height: 1.05; }
+    .wf .hand--xl { font-size: 36px; line-height: 1.0; letter-spacing: -.5px; }
+    .wf .hand-2 { font-family: var(--hand-2); font-weight: 400; color: var(--ink-soft); }
+
+    /* Mono label, lowercased monoid */
+    .wf .ml {
+      font-family: var(--mono); font-size: 10px; color: var(--ink-soft);
+      letter-spacing: .08em; text-transform: uppercase;
+    }
+    .wf .ml--accent { color: var(--accent); }
+
+    /* Serif heading */
+    .wf .sh {
+      font-family: var(--serif); font-weight: normal; color: var(--ink);
+      text-transform: lowercase; letter-spacing: -.4px; line-height: 1.05;
+    }
+
+    /* Wavy underline / scribble accents */
+    .wf .scribble {
+      stroke: var(--ink); fill: none; stroke-width: 1.4;
+      stroke-linecap: round; stroke-linejoin: round;
+    }
+    .wf .scribble--accent { stroke: var(--accent); }
+    .wf .scribble--soft { stroke: var(--ink-soft); stroke-width: 1.1; }
+
+    /* Stack of chips iconography */
+    .wf .chip {
+      width: 12px; height: 12px; border-radius: 50%;
+      border: 1.25px solid var(--ink); background: var(--paper);
+      display: inline-block; position: relative;
+    }
+    .wf .chip--accent { background: var(--accent); border-color: var(--ink); }
+    .wf .chip-stack { display: inline-flex; gap: 2px; align-items: center; }
+
+    /* Card placeholder */
+    .wf .card-ph {
+      border: 1.25px solid var(--ink); border-radius: 4px;
+      background: var(--paper);
+      display: inline-flex; align-items: center; justify-content: center;
+      font-family: var(--hand); font-weight: 700; color: var(--ink);
+    }
+    .wf .card-ph--back { background: repeating-linear-gradient(135deg,
+      var(--paper-2), var(--paper-2) 3px, var(--paper) 3px, var(--paper) 5px); }
+    .wf .card-ph--red { color: var(--accent); }
+
+    /* Felt — barely-there warmth */
+    .wf .felt {
+      background:
+        radial-gradient(ellipse at 50% 50%, var(--paper-2) 0%, var(--paper-3) 80%);
+    }
+    .wf .felt--dark {
+      background: radial-gradient(ellipse at 50% 50%, #25221F 0%, #1A1814 80%);
+      color: var(--paper);
+    }
+    .wf .felt--accent {
+      background: radial-gradient(ellipse at 50% 50%, #B5664300 0%, #A85C3A2A 70%, #A85C3A40 100%);
+    }
+
+    /* Annotation arrow */
+    .wf .annot {
+      font-family: var(--hand); font-weight: 600; color: var(--accent);
+      font-size: 14px; line-height: 1; pointer-events: none;
+    }
+
+    /* Sticky button-y */
+    .wf .btn {
+      border: 1.5px solid var(--ink); border-radius: 6px; padding: 8px 14px;
+      background: var(--paper); font-family: var(--hand); font-weight: 600;
+      font-size: 16px; color: var(--ink); display: inline-flex;
+      align-items: center; justify-content: center; gap: 6px;
+      box-shadow: 1.5px 1.5px 0 var(--ink);
+    }
+    .wf .btn--primary { background: var(--accent); color: var(--paper); border-color: var(--ink); }
+    .wf .btn--ghost { box-shadow: none; background: transparent; }
+
+    /* Avatar shapes */
+    .wf .avatar {
+      width: 36px; height: 36px; border-radius: 50%;
+      border: 1.5px solid var(--ink); background: var(--paper-2);
+      display: inline-flex; align-items: center; justify-content: center;
+      font-family: var(--hand); font-weight: 600; font-size: 16px;
+    }
+
+    /* Inline equity bar */
+    .wf .equity {
+      height: 8px; border: 1.25px solid var(--ink); border-radius: 4px;
+      background: var(--paper); position: relative; overflow: hidden;
+    }
+    .wf .equity > i {
+      display: block; height: 100%; background: var(--accent);
+      border-right: 1px solid var(--ink);
+    }
+
+    /* Frame around each wireframe artboard for sketch feel */
+    .wf-frame {
+      position: absolute; inset: 0; pointer-events: none;
+    }
+
+    /* Annotation pill (red rim around something) */
+    .wf .ring {
+      position: absolute; border: 1.5px dashed var(--accent);
+      border-radius: 8px; pointer-events: none;
+    }
+
+    /* Helper: torn-paper top accent */
+    .wf .tab {
+      position: absolute; top: -10px; left: 16px;
+      background: var(--paper); padding: 0 8px;
+      font-family: var(--hand); font-weight: 700;
+      color: var(--ink); font-size: 14px;
+    }
+
+    /* Subtle scribble background pattern for placeholder regions */
+    .wf .ph {
+      background-image:
+        repeating-linear-gradient(135deg, transparent 0 8px,
+          rgba(26,24,20,.06) 8px, rgba(26,24,20,.06) 9px);
+    }
+
+    /* Header bar of each wireframe (the "browser chrome / context") */
+    .wf .topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 18px; border-bottom: 1px dashed var(--ink-soft);
+    }
+  </style>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" src="design-canvas.jsx"></script>
+  <script type="text/babel" src="tweaks-panel.jsx"></script>
+  <script type="text/babel" src="wf-shared.jsx"></script>
+  <script type="text/babel" src="wf-spectator.jsx"></script>
+  <script type="text/babel" src="wf-spectator2.jsx"></script>
+  <script type="text/babel" src="wf-player.jsx"></script>
+  <script type="text/babel" src="wf-player2.jsx"></script>
+  <script type="text/babel" src="wf-explorations.jsx"></script>
+  <script type="text/babel" src="wf-consolidated.jsx"></script>
+  <script type="text/babel" src="wf-app.jsx"></script>
+</body>
+</html>
