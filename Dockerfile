@@ -16,11 +16,11 @@ RUN bun run build
 FROM python:3.13-slim@sha256:dc1546eefcbe8caaa1f004f16ab76b204b5e1dbd58ff81b899f21cd40541232f
 COPY --from=ghcr.io/astral-sh/uv:latest@sha256:1025398289b62de8269e70c45b91ffa37c373f38118d7da036fb8bb8efc85d97 /uv /usr/local/bin/uv
 WORKDIR /app
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev
-COPY src/ ./src/
-COPY --from=frontend-build /app/out ./src/poker/static/
 RUN groupadd --system poker && useradd --system --gid poker --create-home poker
+COPY --chown=poker:poker pyproject.toml uv.lock ./
+COPY --chown=poker:poker src/ ./src/
+COPY --from=frontend-build --chown=poker:poker /app/out ./src/poker/static/
 USER poker
+RUN uv sync --frozen --no-dev
 EXPOSE 8000
-CMD ["uv", "run", "uvicorn", "poker.server:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "--frozen", "--no-sync", "--no-dev", "uvicorn", "poker.server:app", "--host", "0.0.0.0", "--port", "8000"]
