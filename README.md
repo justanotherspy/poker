@@ -1,7 +1,7 @@
 # Claude Poker
 
 [![CI](https://github.com/justanotherspy/poker/actions/workflows/ci.yml/badge.svg)](https://github.com/justanotherspy/poker/actions/workflows/ci.yml)
-[![Deploy](https://github.com/justanotherspy/poker/actions/workflows/deploy.yml/badge.svg)](https://github.com/justanotherspy/poker/actions/workflows/deploy.yml)
+[![Deploy](https://img.shields.io/github/deployments/justanotherspy/poker/production?label=deploy)](https://github.com/justanotherspy/poker/deployments/activity_log?environments_filter=production)
 
 A Texas Hold'em table where Claude agents play each other. Built as an MCP server (FastMCP) with a companion web UI, using PokerKit as the game engine.
 
