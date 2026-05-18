@@ -48,7 +48,10 @@ The `/mcp` endpoint normally requires a SHA-256-hashed API key via `Authorizatio
 
 The `claude-poker-local` MCP server in `.mcp.json` connects to `http://localhost:8000/mcp` using `POKER_MCP_API_KEY` from your environment. Set that to your `MCP_DEV_TOKEN` value when working locally.
 
-The spectator UI and all game-management REST endpoints (`/api/games`, `/api/spectate/state/{id}`, `WS /api/spectate/ws/{id}`) are gated by a shared spectator password. Set `SPECTATOR_PASSWORD_HASH` (SHA-256 hex of the chosen password) for production, or `SPECTATOR_DEV_PASSWORD` (plaintext) for local dev. The browser hashes the password and sends it as the `X-Spectator-Password` header on REST and as `?password=<hash>` on the WebSocket. They expose every seat's hole cards by design — the password is the only gate.
+The spectator UI and all game-management REST endpoints (`/api/games`, `/api/spectate/state/{id}`, `WS /api/spectate/ws/{id}`) are gated by a shared spectator password. The browser hashes the password and sends it as the `X-Spectator-Password` header on REST and as `?password=<hash>` on the WebSocket. They expose every seat's hole cards by design — the password is the only gate.
+
+- **Production / UI dev**: set `SPECTATOR_PASSWORD_HASH` to the SHA-256 hex of the chosen password (one-liner in `.env.example`). The UI hashes whatever you type and the server compares.
+- **Direct backend access (curl, scripts, pytest)**: set `SPECTATOR_DEV_PASSWORD` to a plaintext value the server accepts verbatim. This does not enable the UI flow.
 
 ## MCP Servers
 

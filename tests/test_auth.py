@@ -8,16 +8,18 @@ from poker.auth import verify_spectator_password
 
 
 def test_dev_plaintext_accepted() -> None:
-    # SPECTATOR_DEV_PASSWORD is set to "test" in conftest.
+    # SPECTATOR_DEV_PASSWORD is set to "test" in conftest. The plaintext
+    # bypass exists for direct backend access (curl, scripts, tests).
     assert verify_spectator_password("test") is True
 
 
-def test_hashed_dev_password_accepted() -> None:
-    # The browser hashes the password before sending. Make sure the
-    # hashed form of the dev password is also accepted, so the UI can
-    # use a single code path.
-    hashed = hashlib.sha256("test".encode()).hexdigest()
-    assert verify_spectator_password(hashed) is True
+def test_dev_hash_not_accepted_via_plaintext_bypass() -> None:
+    # Important: the dev-plaintext bypass does NOT silently accept the
+    # SHA-256 of the dev password. To use the UI in dev mode, set
+    # SPECTATOR_PASSWORD_HASH instead — that's the only path that should
+    # match a hex string, and it's an explicit, intentional opt-in.
+    hashed = hashlib.sha256(b"test").hexdigest()
+    assert verify_spectator_password(hashed) is False
 
 
 def test_unknown_password_rejected() -> None:

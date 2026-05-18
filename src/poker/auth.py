@@ -37,8 +37,14 @@ def _spectator_dev_password() -> str | None:
 
 
 def verify_spectator_password(submitted: str) -> bool:
-    """Submitted may be either the SHA-256 hex (UI flow) or the plaintext
-    SPECTATOR_DEV_PASSWORD value (dev flow)."""
+    """Accepts either the SHA-256 hex of the prod password (matches
+    `SPECTATOR_PASSWORD_HASH`) or the plaintext `SPECTATOR_DEV_PASSWORD`
+    bypass for direct backend access (curl, scripts, tests).
+
+    The browser hashes the password before sending, so to use the UI in
+    dev mode set `SPECTATOR_PASSWORD_HASH` to the hash of a chosen
+    password (see `.env.example`) and type that password into the modal.
+    """
     if not submitted:
         return False
     expected = _spectator_hash()
@@ -47,13 +53,6 @@ def verify_spectator_password(submitted: str) -> bool:
     dev = _spectator_dev_password()
     if dev is not None and hmac.compare_digest(submitted, dev):
         return True
-    # Convenience: SUBMITTED was the plaintext dev password, but the client
-    # already hashed it before sending. Accept the hash of the dev password
-    # too so the UI doesn't need a separate code path.
-    if dev is not None:
-        dev_hex = hashlib.sha256(dev.encode()).hexdigest()
-        if hmac.compare_digest(submitted.lower(), dev_hex):
-            return True
     return False
 
 
