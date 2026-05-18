@@ -897,3 +897,202 @@ html, body {
 }
 .conn-pill--live { border-color: var(--success); color: var(--success); }
 .conn-pill--reconnecting { border-color: var(--danger); color: var(--danger); }
+
+/* topbar buttons (games / logout) */
+.topbar-button {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .04em;
+  text-transform: lowercase;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-2);
+  background: var(--bg-3);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.topbar-button:hover { color: var(--text); border-color: var(--border-strong); }
+
+/* modal / dialog */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 24px;
+}
+.modal-card {
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 24px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .25);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.modal-card--wide { max-width: 640px; }
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.modal-title {
+  font-family: var(--serif);
+  font-size: 20px;
+  margin: 0;
+  color: var(--text);
+}
+.modal-subtitle {
+  font-family: var(--serif);
+  font-size: 14px;
+  color: var(--text-2);
+  margin: 0;
+}
+.modal-close {
+  background: transparent;
+  border: 0;
+  color: var(--text-2);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.modal-close:hover { color: var(--text); }
+.modal-section { display: flex; flex-direction: column; gap: 10px; }
+.modal-section-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 0;
+}
+.modal-empty {
+  font-family: var(--serif);
+  font-size: 14px;
+  color: var(--text-2);
+  padding: 12px 0;
+}
+.modal-error {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--bg);
+}
+.modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.modal-form--row {
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.modal-input {
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-2);
+  background: var(--bg);
+  color: var(--text);
+}
+.modal-input--narrow { width: 110px; }
+.modal-input:focus {
+  outline: none;
+  border-color: var(--border-strong);
+}
+.modal-button {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: .04em;
+  text-transform: lowercase;
+  padding: 7px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border-2);
+  background: var(--bg-3);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.modal-button:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.modal-button:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+.modal-button--primary {
+  background: var(--accent);
+  border-color: var(--accent-edge);
+  color: #FBFAF8;
+}
+.modal-button--primary:hover:not(:disabled) {
+  background: var(--accent-2);
+  color: #FBFAF8;
+}
+.modal-button--danger {
+  color: var(--danger);
+  border-color: var(--border-2);
+}
+.modal-button--danger:hover:not(:disabled) {
+  border-color: var(--danger);
+}
+
+/* games list inside modal */
+.game-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.game-list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.game-list-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.game-list-id {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+}
+.game-list-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}

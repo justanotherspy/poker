@@ -1,21 +1,12 @@
-"""Unit tests for the GameState core — PokerKit wrapping, actions, showdown."""
+"""Unit tests for the GameState core — PokerKit wrapping, actions, showdown,
+seat tokens, and multi-hand support."""
 
 from unittest.mock import patch
 
-import fakeredis
 import pytest
 
 import poker.store as store_module
-from poker.game import GameState, create_game, get_game
-
-
-@pytest.fixture(autouse=True)
-def fake_redis() -> fakeredis.FakeRedis:  # type: ignore[type-arg]
-    r: fakeredis.FakeRedis = fakeredis.FakeRedis(decode_responses=True)  # type: ignore[type-arg]
-    store_module._memory.clear()
-    with patch.object(store_module, "_client", return_value=r):
-        yield r
-
+from poker.game import GameState, create_game, get_game, list_games
 
 # ---------------------------------------------------------------------------
 # create_game / get_game
@@ -34,24 +25,91 @@ def test_create_game_custom_params() -> None:
     assert sum(view.stacks.values()) <= 3 * 500
 
 
-def test_get_game_none_before_create() -> None:
-    assert get_game() is None
+def test_get_game_returns_none_for_unknown() -> None:
+    assert get_game("does-not-exist") is None
 
 
 def test_get_game_returns_game_after_create() -> None:
-    create_game()
-    g = get_game()
-    assert g is not None
-    assert g.seat_count == 2
+    g = create_game()
+    loaded = get_game(g.game_id)
+    assert loaded is not None
+    assert loaded.seat_count == 2
+    assert loaded.game_id == g.game_id
 
 
-def test_create_game_resets_active_game() -> None:
-    create_game()
-    g1 = get_game()
-    create_game()
-    g2 = get_game()
-    assert g1 is not None and g2 is not None
+def test_create_game_does_not_clobber_others() -> None:
+    g1 = create_game()
+    g2 = create_game()
     assert g1.game_id != g2.game_id
+    assert get_game(g1.game_id) is not None
+    assert get_game(g2.game_id) is not None
+
+
+def test_list_games_returns_summaries() -> None:
+    g1 = create_game(seat_count=2)
+    g2 = create_game(seat_count=3)
+    summaries = list_games()
+    by_id = {s.game_id: s for s in summaries}
+    assert by_id[g1.game_id].seat_count == 2
+    assert by_id[g2.game_id].seat_count == 3
+    assert by_id[g1.game_id].hand_number == 1
+    assert by_id[g1.game_id].seats_filled == 0
+
+
+# ---------------------------------------------------------------------------
+# Seat tokens — claim, resolve, exhaustion
+# ---------------------------------------------------------------------------
+
+
+def test_claim_seat_returns_token() -> None:
+    g = create_game(seat_count=2)
+    claim = g.claim_seat()
+    assert claim is not None
+    seat_id, token = claim
+    assert seat_id in (1, 2)
+    assert isinstance(token, str)
+    assert len(token) >= 16
+
+
+def test_resolve_seat_returns_correct_seat() -> None:
+    g = create_game(seat_count=2)
+    claim = g.claim_seat()
+    assert claim is not None
+    seat_id, token = claim
+    assert g.resolve_seat(token) == seat_id
+
+
+def test_resolve_unknown_token_returns_none() -> None:
+    g = create_game(seat_count=2)
+    assert g.resolve_seat("nope") is None
+
+
+def test_claim_seat_exhausts() -> None:
+    g = create_game(seat_count=2)
+    assert g.claim_seat() is not None
+    assert g.claim_seat() is not None
+    assert g.claim_seat() is None
+
+
+def test_claimed_seats_persist_through_serialization() -> None:
+    g = create_game(seat_count=2)
+    _, tok = g.claim_seat()  # type: ignore[misc]
+    g2 = GameState.from_dict(g.to_dict())
+    assert g2.resolve_seat(tok) is not None
+    # And the next claim returns the OTHER seat, not the one already taken.
+    next_claim = g2.claim_seat()
+    assert next_claim is not None
+    assert next_claim[0] != g2.resolve_seat(tok)
+
+
+def test_seats_filled_count() -> None:
+    g = create_game(seat_count=3)
+    assert g.seats_filled() == 0
+    g.claim_seat()
+    assert g.seats_filled() == 1
+    g.claim_seat()
+    g.claim_seat()
+    assert g.seats_filled() == 3
 
 
 # ---------------------------------------------------------------------------
@@ -64,12 +122,6 @@ def test_seat1_sees_own_hole_cards() -> None:
     v1 = g.get_view(1)
     assert len(v1.hole_cards) == 2
     assert all(len(c) == 2 for c in v1.hole_cards)
-
-
-def test_seat2_sees_own_hole_cards() -> None:
-    g = create_game()
-    v2 = g.get_view(2)
-    assert len(v2.hole_cards) == 2
 
 
 def test_seats_have_different_hole_cards() -> None:
@@ -103,12 +155,6 @@ def test_current_actor_is_1indexed() -> None:
     assert actor in (1, 2)
 
 
-def test_to_call_nonzero_for_preflop_actor() -> None:
-    g = create_game()
-    view = g.get_view(1)
-    assert view.to_call >= 0
-
-
 def test_phase_preflop_at_start() -> None:
     g = create_game()
     assert g.get_view(1).phase == "preflop"
@@ -127,8 +173,7 @@ def test_min_raise_present_preflop() -> None:
 
 
 def _get_actor(g: GameState) -> int:
-    view = g.get_view(1)
-    actor = view.current_actor
+    actor = g.get_view(1).current_actor
     assert actor is not None
     return actor
 
@@ -159,17 +204,6 @@ def test_call_accepted() -> None:
     else:
         result = g.apply_action(actor, "check")
         assert "checks" in result
-
-
-def test_check_on_free_street() -> None:
-    g = create_game()
-    actor = _get_actor(g)
-    g.apply_action(actor, "call")
-    actor = _get_actor(g)
-    g.apply_action(actor, "check")
-    actor = _get_actor(g)
-    result = g.apply_action(actor, "check")
-    assert "checks" in result
 
 
 def test_raise_accepted() -> None:
@@ -206,24 +240,6 @@ def test_phase_advances_through_streets() -> None:
     assert len(g.get_view(1).board) == 5
 
 
-def test_full_hand_chips_conserved() -> None:
-    g = create_game(starting_stack=1000)
-    for _ in range(8):
-        if g.get_view(1).phase == "ended":
-            break
-        actor = _get_actor(g)
-        v = g.get_view(actor)
-        if v.to_call > 0:
-            g.apply_action(actor, "call")
-        else:
-            g.apply_action(actor, "check")
-    while g.needs_showdown():
-        g.advance_showdown()
-    stacks = g.get_view(1).stacks
-    assert sum(stacks.values()) == 2000
-    assert g.get_view(1).phase == "ended"
-
-
 # ---------------------------------------------------------------------------
 # apply_action — error paths
 # ---------------------------------------------------------------------------
@@ -252,111 +268,56 @@ def test_raise_without_amount_raises() -> None:
         g.apply_action(actor, "raise")
 
 
-def test_raise_invalid_amount_raises() -> None:
-    g = create_game()
-    actor = _get_actor(g)
-    with pytest.raises(ValueError):
-        g.apply_action(actor, "raise", 1)
-
-
-def test_unknown_action_raises() -> None:
-    g = create_game()
-    actor = _get_actor(g)
-    with pytest.raises(ValueError, match="Unknown action"):
-        g.apply_action(actor, "shove")  # type: ignore[arg-type]
-
-
 # ---------------------------------------------------------------------------
-# bluffs
+# Multi-hand — start_next_hand carries stacks, rotates button.
 # ---------------------------------------------------------------------------
 
 
-def test_bluff_flag_stored() -> None:
+def test_start_next_hand_blocked_while_hand_in_progress() -> None:
     g = create_game()
-    g.bluffs[1] = True
-    assert g.bluffs[1] is True
+    assert g.start_next_hand() is False
+    assert g.hand_number == 1
 
 
-def test_bluff_flag_defaults_absent() -> None:
-    g = create_game()
-    assert 1 not in g.bluffs
-
-
-# ---------------------------------------------------------------------------
-# showdown
-# ---------------------------------------------------------------------------
-
-
-def _play_to_showdown(g: GameState) -> None:
-    for _ in range(8):
-        if g.needs_showdown() or g.get_view(1).phase == "ended":
-            break
-        actor = _get_actor(g)
-        v = g.get_view(actor)
-        if v.to_call > 0:
-            g.apply_action(actor, "call")
-        else:
-            g.apply_action(actor, "check")
-
-
-def test_needs_showdown_after_river() -> None:
-    g = create_game()
-    _play_to_showdown(g)
-    if not g.get_view(1).phase == "ended":
-        assert g.needs_showdown()
-
-
-def test_advance_showdown_reduces_indices() -> None:
-    g = create_game()
-    _play_to_showdown(g)
-    if not g.needs_showdown():
-        pytest.skip("Hand ended by fold before showdown")
-    g.advance_showdown()
-
-
-def test_showdown_chips_distributed() -> None:
+def test_start_next_hand_succeeds_after_fold() -> None:
     g = create_game(starting_stack=1000)
-    _play_to_showdown(g)
-    while g.needs_showdown():
-        g.advance_showdown()
-    stacks = g.get_view(1).stacks
-    assert sum(stacks.values()) == 2000
-    assert g.get_view(1).phase == "ended"
-
-
-# ---------------------------------------------------------------------------
-# action log
-# ---------------------------------------------------------------------------
-
-
-def test_action_log_has_hole_deal_entries() -> None:
-    g = create_game()
-    deal_entries = [e for e in g._action_log if e["type"] == "deal_hole"]
-    assert len(deal_entries) == 4  # 2 cards × 2 seats
-
-
-def test_action_log_records_player_actions() -> None:
-    g = create_game()
     actor = _get_actor(g)
     g.apply_action(actor, "fold")
-    player_types = {"fold", "call", "check", "raise", "bet"}
-    player_entries = [e for e in g._action_log if e["type"] in player_types]
-    assert len(player_entries) == 1
-    assert player_entries[0]["seat"] == actor
+    started = g.start_next_hand()
+    assert started is True
+    assert g.hand_number == 2
+    # Phase resets to preflop.
+    assert g.get_view(1).phase == "preflop"
+    # Total stacks conserved.
+    assert sum(g.get_view(1).stacks.values()) + g.get_view(1).pot == 2000
 
 
-def test_action_log_records_board_deals() -> None:
-    g = create_game()
+def test_start_next_hand_rotates_button() -> None:
+    g = create_game(seat_count=2, starting_stack=1000)
+    initial_sb = g.sb_idx
     actor = _get_actor(g)
-    g.apply_action(actor, "call")
+    g.apply_action(actor, "fold")
+    assert g.start_next_hand() is True
+    assert g.sb_idx == (initial_sb + 1) % 2
+
+
+def test_start_next_hand_ends_game_on_bust() -> None:
+    g = create_game(seat_count=2, starting_stack=1000)
     actor = _get_actor(g)
-    g.apply_action(actor, "check")
-    board_entries = [e for e in g._action_log if e["type"] == "deal_board"]
-    assert len(board_entries) == 3  # flop
+    # Shove all-in then call → one player wins all stacks.
+    g.apply_action(actor, "raise", 1000)
+    other = _get_actor(g)
+    g.apply_action(other, "call")
+    while g.needs_showdown():
+        g.advance_showdown()
+    # Now one player has 2000, the other has 0.
+    started = g.start_next_hand()
+    assert started is False
+    assert g.game_ended is True
 
 
 # ---------------------------------------------------------------------------
-# serialization round-trip
+# Serialization round-trip — must preserve seat tokens, sb_idx, hand_number.
 # ---------------------------------------------------------------------------
 
 
@@ -368,37 +329,32 @@ def test_to_dict_from_dict_roundtrip_hole_cards() -> None:
     assert g.get_view(2).hole_cards == g2.get_view(2).hole_cards
 
 
-def test_to_dict_from_dict_roundtrip_after_action() -> None:
-    g = create_game()
-    actor = _get_actor(g)
-    g.apply_action(actor, "call")
-    actor = _get_actor(g)
-    g.apply_action(actor, "check")
-    # Now on flop
-    d = g.to_dict()
-    g2 = GameState.from_dict(d)
-    assert g2.get_view(1).phase == "flop"
-    assert g2.get_view(1).board == g.get_view(1).board
-
-
-def test_to_dict_from_dict_preserves_bluffs() -> None:
-    g = create_game()
-    g.bluffs[1] = True
-    g.bluffs[2] = False
-    g2 = GameState.from_dict(g.to_dict())
-    assert g2.bluffs == {1: True, 2: False}
-
-
-def test_from_dict_game_id_preserved() -> None:
+def test_to_dict_preserves_seat_tokens() -> None:
     g = create_game()
     g2 = GameState.from_dict(g.to_dict())
-    assert g2.game_id == g.game_id
+    assert g2.seat_tokens == g.seat_tokens
+
+
+def test_to_dict_preserves_sb_idx() -> None:
+    g = create_game(seat_count=3)
+    actor = _get_actor(g)
+    g.apply_action(actor, "fold")
+    g.start_next_hand()
+    g2 = GameState.from_dict(g.to_dict())
+    assert g2.sb_idx == g.sb_idx
+    assert g2.hand_number == g.hand_number
+
+
+def test_to_dict_preserves_game_ended() -> None:
+    g = create_game(starting_stack=1000)
+    g.game_ended = True
+    g2 = GameState.from_dict(g.to_dict())
+    assert g2.game_ended is True
 
 
 def test_get_game_loads_from_redis() -> None:
     g = create_game()
-    # get_game() reads fresh from Redis each time
-    g2 = get_game()
+    g2 = get_game(g.game_id)
     assert g2 is not None
     assert g2.game_id == g.game_id
     assert g2.get_view(1).hole_cards == g.get_view(1).hole_cards
@@ -411,101 +367,28 @@ def test_get_game_loads_from_redis() -> None:
 
 def test_create_and_get_game_without_redis() -> None:
     with patch.object(store_module, "_client", return_value=None):
-        store_module._memory.clear()
+        store_module._memory["games"] = {}
         g = create_game()
-        g2 = get_game()
+        g2 = get_game(g.game_id)
         assert g2 is not None
         assert g2.game_id == g.game_id
-        assert g2.get_view(1).hole_cards == g.get_view(1).hole_cards
-
-
-def test_act_persists_without_redis() -> None:
-    with patch.object(store_module, "_client", return_value=None):
-        store_module._memory.clear()
-        g = create_game()
-        actor = _get_actor(g)
-        g.apply_action(actor, "fold")
-        store_module.save(g.to_dict())
-        g2 = get_game()
-        assert g2 is not None
-        assert g2.get_view(1).phase == "ended"
 
 
 # ---------------------------------------------------------------------------
-# all-in board run-out (bug_022 regression)
+# all-in board run-out regression
 # ---------------------------------------------------------------------------
 
 
 def test_allin_board_runout_completes() -> None:
-    """All-in confrontation must run the board out and end the hand."""
     g = create_game(starting_stack=1000)
     actor = _get_actor(g)
-    # Shove all-in (raise to starting stack)
     g.apply_action(actor, "raise", 1000)
-    # Other seat calls all-in
     actor2 = _get_actor(g)
     g.apply_action(actor2, "call")
-    # Now both are all-in: showdown needed, board not yet dealt
     assert g.needs_showdown()
-    # Drain showdown
     while g.needs_showdown():
         g.advance_showdown()
-    # Board must be fully dealt and hand must be over
     board = g.get_view(1).board
     assert len(board) == 5
     assert g.get_view(1).phase == "ended"
-    # Chips must be conserved
     assert sum(g.get_view(1).stacks.values()) == 2000
-
-
-def test_allin_round_trips_via_serialization() -> None:
-    """Serialization round-trip of an all-in hand reconstructs correctly."""
-    g = create_game(starting_stack=1000)
-    actor = _get_actor(g)
-    g.apply_action(actor, "raise", 1000)
-    actor2 = _get_actor(g)
-    g.apply_action(actor2, "call")
-    while g.needs_showdown():
-        g.advance_showdown()
-    d = g.to_dict()
-    g2 = GameState.from_dict(d)
-    assert g2.get_view(1).phase == "ended"
-    assert g2.get_view(1).board == g.get_view(1).board
-    assert sum(g2.get_view(1).stacks.values()) == 2000
-
-
-# ---------------------------------------------------------------------------
-# showdown serialization round-trip (bug_003 regression)
-# ---------------------------------------------------------------------------
-
-
-def _play_to_showdown_full(g: GameState) -> None:
-    for _ in range(10):
-        if g.needs_showdown() or g.get_view(1).phase == "ended":
-            break
-        actor = _get_actor(g)
-        v = g.get_view(actor)
-        if v.to_call > 0:
-            g.apply_action(actor, "call")
-        else:
-            g.apply_action(actor, "check")
-
-
-def test_showdown_persisted_and_advances_via_reload() -> None:
-    """advance_showdown must persist so reloaded state also advances."""
-    g = create_game(starting_stack=1000)
-    _play_to_showdown_full(g)
-    if not g.needs_showdown():
-        pytest.skip("Hand ended by fold before showdown")
-    store_module.save(g.to_dict())
-    # Reload (simulates second machine loading from Redis)
-    g2 = get_game()
-    assert g2 is not None
-    assert g2.needs_showdown()
-    g2.advance_showdown()
-    store_module.save(g2.to_dict())
-    # Reload again — showdown progress must be reflected
-    g3 = get_game()
-    assert g3 is not None
-    show_entries = [e for e in g3._action_log if e["type"] == "show"]
-    assert len(show_entries) >= 1

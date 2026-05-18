@@ -1,6 +1,7 @@
+import secrets
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 from pokerkit import Automation, NoLimitTexasHoldem, StandardHighHand
@@ -44,6 +45,8 @@ class TableView:
     to_call: int
     min_raise: int | None
     phase: str
+    hand_number: int = 1
+    game_ended: bool = False
 
 
 # --- Spectator view model -------------------------------------------------
@@ -56,6 +59,7 @@ class TableView:
 Blind = Literal["SB", "BB"]
 Street = Literal["pre", "flop", "turn", "river"]
 SeatKind = Literal["human", "agent"]
+SeatStatus = Literal["open", "claimed"]
 
 
 @dataclass
@@ -76,6 +80,7 @@ class SpectatorSeat:
     hand_rank: str | None = None
     shows_cards: bool = False
     won_amount: int | None = None
+    status: SeatStatus = "open"
 
 
 @dataclass
@@ -91,6 +96,20 @@ class HistoryEntry:
     street: Street
     text: str
     marker: bool = False
+    hand_number: int = 1
+
+
+@dataclass
+class GameSummary:
+    """Compact game listing used by the spectator menu and join discovery."""
+
+    game_id: str
+    seat_count: int
+    seats_filled: int
+    hand_number: int
+    phase: str
+    game_ended: bool
+    created_at: float
 
 
 @dataclass
@@ -107,6 +126,8 @@ class SpectatorView:
     chat: list[ChatMessage]
     stats: dict[str, dict[str, float]] | None
     winner_names: list[str] | None
+    game_ended: bool = False
+    seats_open: list[int] = field(default_factory=list)
 
 
 # Standard 6-max position labels. Index 0 is the small blind, index n-1 is
@@ -121,16 +142,27 @@ _POS_LABELS: dict[int, list[str]] = {
 }
 
 
-def _position_for(seat_index: int, seat_count: int) -> str:
+def _position_for(seat_index: int, seat_count: int, sb_idx: int = 0) -> str:
     labels = _POS_LABELS.get(seat_count)
     if labels is None:
         return f"S{seat_index + 1}"
-    return labels[seat_index]
+    return labels[(seat_index - sb_idx) % seat_count]
 
 
-def _dealer_index(seat_count: int) -> int:
-    # Heads-up: SB acts as dealer (button). Otherwise the last seat is BTN.
-    return 0 if seat_count == 2 else seat_count - 1
+def _dealer_index(seat_count: int, sb_idx: int = 0) -> int:
+    # Heads-up: SB acts as dealer (button). Otherwise BTN is the seat
+    # immediately before SB.
+    if seat_count == 2:
+        return sb_idx
+    return (sb_idx - 1) % seat_count
+
+
+def _blind_for(seat_index: int, seat_count: int, sb_idx: int) -> Blind | None:
+    if seat_index == sb_idx:
+        return "SB"
+    if seat_index == (sb_idx + 1) % seat_count:
+        return "BB"
+    return None
 
 
 def _seat_name(seat_id: int) -> str:
@@ -174,16 +206,21 @@ def _evaluate_hand_label(hole: list[str], board: list[str]) -> str | None:
     return str(text).lower()
 
 
-def _make_state(seat_count: int, starting_stack: int) -> State:
-    stacks = tuple(starting_stack for _ in range(seat_count))
-    blinds = (50, 100) + (0,) * (seat_count - 2)
+def _make_state(
+    seat_count: int,
+    starting_stacks: tuple[int, ...],
+    sb_idx: int,
+) -> State:
+    blinds_list = [0] * seat_count
+    blinds_list[sb_idx] = 50
+    blinds_list[(sb_idx + 1) % seat_count] = 100
     return NoLimitTexasHoldem.create_state(
         automations=AUTOMATIONS,
         ante_trimming_status=True,
         raw_antes=0,
-        raw_blinds_or_straddles=blinds,
+        raw_blinds_or_straddles=tuple(blinds_list),
         min_bet=100,
-        raw_starting_stacks=stacks,
+        raw_starting_stacks=starting_stacks,
         player_count=seat_count,
     )
 
@@ -196,6 +233,15 @@ class GameState:
         starting_stack: int,
         game_id: str,
         action_log: list[dict[str, Any]],
+        *,
+        created_at: float | None = None,
+        hand_number: int = 1,
+        sb_idx: int = 0,
+        current_hand_stacks: list[int] | None = None,
+        archived_history: list[dict[str, Any]] | None = None,
+        seat_tokens: dict[int, str] | None = None,
+        seats_open: list[int] | None = None,
+        game_ended: bool = False,
     ) -> None:
         self._state = state
         self.seat_count = seat_count
@@ -204,6 +250,58 @@ class GameState:
         self._action_log = action_log
         self.bluffs: dict[int, bool] = {}
         self.chat_log: list[dict[str, Any]] = []
+        self.created_at = created_at if created_at is not None else time.time()
+        self.hand_number = hand_number
+        self.sb_idx = sb_idx
+        self.current_hand_stacks = (
+            list(current_hand_stacks)
+            if current_hand_stacks is not None
+            else [starting_stack] * seat_count
+        )
+        self.archived_history: list[dict[str, Any]] = list(archived_history or [])
+        if seat_tokens is None:
+            seat_tokens = {i + 1: secrets.token_urlsafe(24) for i in range(seat_count)}
+        self.seat_tokens: dict[int, str] = dict(seat_tokens)
+        self.seats_open: list[int] = (
+            list(seats_open)
+            if seats_open is not None
+            else [i + 1 for i in range(seat_count)]
+        )
+        self.game_ended = game_ended
+
+    # ------------------------------------------------------------------
+    # Seat ownership — one agent per seat, enforced by an opaque token.
+    # ------------------------------------------------------------------
+
+    def claim_seat(self) -> tuple[int, str] | None:
+        if not self.seats_open:
+            return None
+        seat_id = self.seats_open.pop(0)
+        return seat_id, self.seat_tokens[seat_id]
+
+    def resolve_seat(self, seat_token: str) -> int | None:
+        for seat_id, tok in self.seat_tokens.items():
+            if secrets.compare_digest(tok, seat_token):
+                return seat_id
+        return None
+
+    def seats_filled(self) -> int:
+        return self.seat_count - len(self.seats_open)
+
+    def summary(self) -> GameSummary:
+        return GameSummary(
+            game_id=self.game_id,
+            seat_count=self.seat_count,
+            seats_filled=self.seats_filled(),
+            hand_number=self.hand_number,
+            phase=self._phase(),
+            game_ended=self.game_ended,
+            created_at=self.created_at,
+        )
+
+    # ------------------------------------------------------------------
+    # Phase / state introspection
+    # ------------------------------------------------------------------
 
     def _board(self) -> list[str]:
         return [repr(c) for group in self._state.board_cards for c in group]
@@ -224,6 +322,13 @@ class GameState:
         if board_len == 4:
             return "turn"
         return "river"
+
+    def is_hand_over(self) -> bool:
+        return not self._state.status and not self.needs_showdown()
+
+    # ------------------------------------------------------------------
+    # Per-seat (player) view — own hole cards only.
+    # ------------------------------------------------------------------
 
     def get_view(self, seat_id: int) -> TableView:
         s = self._state
@@ -246,6 +351,8 @@ class GameState:
             to_call=to_call,
             min_raise=min_raise,
             phase=self._phase(),
+            hand_number=self.hand_number,
+            game_ended=self.game_ended,
         )
 
     # ------------------------------------------------------------------
@@ -264,6 +371,8 @@ class GameState:
         last_text: str | None = None
         for entry in reversed(self._action_log):
             t = entry.get("type")
+            if t == "hand_break":
+                break
             if t in action_types:
                 seat_id = int(entry["seat"])
                 txt = _format_action(entry)
@@ -275,7 +384,7 @@ class GameState:
                         break
 
         actor = (s.actor_index + 1) if s.actor_index is not None else None
-        dealer_idx = _dealer_index(n)
+        dealer_idx = _dealer_index(n, self.sb_idx)
 
         seats: list[SpectatorSeat] = []
         winner_names: list[str] = []
@@ -300,17 +409,18 @@ class GameState:
                     initials=_seat_initials(seat_id),
                     stack=stack,
                     bet=int(s.bets[i]),
-                    position=_position_for(i, n),
+                    position=_position_for(i, n, self.sb_idx),
                     hole_cards=hole,
                     last_action=last_per_seat.get(seat_id),
                     folded=folded,
                     to_act=(actor == seat_id),
                     is_dealer=(i == dealer_idx),
-                    blind=("SB" if i == 0 else "BB" if i == 1 else None),
+                    blind=_blind_for(i, n, self.sb_idx),
                     kind="human",
                     hand_rank=hand_rank,
                     shows_cards=shows,
                     won_amount=won_amount,
+                    status="open" if seat_id in self.seats_open else "claimed",
                 )
             )
 
@@ -327,7 +437,7 @@ class GameState:
 
         return SpectatorView(
             table_id=self.game_id,
-            hand_number=1,
+            hand_number=self.hand_number,
             phase=phase,
             board=board,
             pot=self._pot(),
@@ -338,13 +448,40 @@ class GameState:
             chat=chat,
             stats=None,
             winner_names=(winner_names if ended and winner_names else None),
+            game_ended=self.game_ended,
+            seats_open=list(self.seats_open),
         )
 
     def _build_history(self) -> list[HistoryEntry]:
+        """Cumulative history across all hands of this game.
+
+        Combines `archived_history` (entries from completed hands) with the
+        history derived from the current hand's action log.
+        """
+        entries: list[HistoryEntry] = [
+            HistoryEntry(
+                street=h["street"],
+                text=h["text"],
+                marker=h.get("marker", False),
+                hand_number=h.get("hand_number", 1),
+            )
+            for h in self.archived_history
+        ]
+        entries.extend(self._build_current_hand_history())
+        return entries
+
+    def _current_hand_actions(self) -> list[dict[str, Any]]:
+        """Action log entries for the current hand only (after last hand_break)."""
+        for i in range(len(self._action_log) - 1, -1, -1):
+            if self._action_log[i].get("type") == "hand_break":
+                return self._action_log[i + 1 :]
+        return list(self._action_log)
+
+    def _build_current_hand_history(self) -> list[HistoryEntry]:
         action_types = {"fold", "call", "check", "bet", "raise"}
         entries: list[HistoryEntry] = []
         board_cards_so_far: list[str] = []
-        for entry in self._action_log:
+        for entry in self._current_hand_actions():
             t = entry.get("type")
             if t == "deal_board":
                 board_cards_so_far.append(str(entry["card"]))
@@ -355,6 +492,7 @@ class GameState:
                             street="flop",
                             text=" ".join(board_cards_so_far),
                             marker=True,
+                            hand_number=self.hand_number,
                         )
                     )
                 elif count == 4:
@@ -363,6 +501,7 @@ class GameState:
                             street="turn",
                             text=board_cards_so_far[-1],
                             marker=True,
+                            hand_number=self.hand_number,
                         )
                     )
                 elif count == 5:
@@ -371,6 +510,7 @@ class GameState:
                             street="river",
                             text=board_cards_so_far[-1],
                             marker=True,
+                            hand_number=self.hand_number,
                         )
                     )
             elif t in action_types:
@@ -389,6 +529,7 @@ class GameState:
                     HistoryEntry(
                         street=street,
                         text=f"{_seat_name(seat_id)} {text}",
+                        hand_number=self.hand_number,
                     )
                 )
         return entries
@@ -404,12 +545,7 @@ class GameState:
         return msg
 
     def _advance_board(self) -> None:
-        """Burn and deal board cards until no more are pending.
-
-        Uses a single interleaved loop so all-in run-outs across multiple
-        streets (flop → turn → river with no intervening betting) complete
-        in one call.
-        """
+        """Burn and deal board cards until no more are pending."""
         s = self._state
         while s.can_burn_card() or s.can_deal_board():
             if s.can_burn_card():
@@ -470,6 +606,60 @@ class GameState:
         # may become available.
         self._advance_board()
 
+    # ------------------------------------------------------------------
+    # Multi-hand support — deal the next hand against current stacks.
+    # ------------------------------------------------------------------
+
+    def start_next_hand(self) -> bool:
+        """Deal the next hand. Returns False (and ends the game) if it can't.
+
+        Cannot deal a next hand if: the current hand isn't over, the game
+        has already ended, or any seat busted out (stack went to 0). The
+        bust case ends the game — we don't support rebuys.
+        """
+        if self.game_ended:
+            return False
+        if not self.is_hand_over():
+            return False
+
+        new_stacks = tuple(int(self._state.stacks[i]) for i in range(self.seat_count))
+        if any(st <= 0 for st in new_stacks):
+            self.game_ended = True
+            return False
+        if sum(1 for st in new_stacks if st > 0) < 2:
+            self.game_ended = True
+            return False
+
+        # Archive this hand's history before resetting.
+        self.archived_history.extend(
+            asdict(e) for e in self._build_current_hand_history()
+        )
+
+        self.sb_idx = (self.sb_idx + 1) % self.seat_count
+        self.hand_number += 1
+        self.current_hand_stacks = list(new_stacks)
+        self.bluffs = {}
+        self._action_log.append(
+            {
+                "type": "hand_break",
+                "hand_number": self.hand_number,
+                "stacks": list(new_stacks),
+                "sb_idx": self.sb_idx,
+            }
+        )
+
+        self._state = _make_state(self.seat_count, new_stacks, self.sb_idx)
+        for _ in range(2 * self.seat_count):
+            card = repr(self._state.deck_cards[0])
+            self._state.deal_hole(card)
+            self._action_log.append({"type": "deal_hole", "card": card})
+
+        return True
+
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "game_id": self.game_id,
@@ -478,15 +668,35 @@ class GameState:
             "action_log": self._action_log,
             "bluffs": {str(k): v for k, v in self.bluffs.items()},
             "chat_log": self.chat_log,
+            "created_at": self.created_at,
+            "hand_number": self.hand_number,
+            "sb_idx": self.sb_idx,
+            "current_hand_stacks": list(self.current_hand_stacks),
+            "archived_history": list(self.archived_history),
+            "seat_tokens": {str(k): v for k, v in self.seat_tokens.items()},
+            "seats_open": list(self.seats_open),
+            "game_ended": self.game_ended,
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "GameState":
         seat_count: int = d["seat_count"]
         starting_stack: int = d["starting_stack"]
-        action_log: list[dict[str, Any]] = d["action_log"]
-        state = _make_state(seat_count, starting_stack)
-        for entry in action_log:
+        action_log: list[dict[str, Any]] = list(d["action_log"])
+        sb_idx: int = int(d.get("sb_idx", 0))
+        current_hand_stacks: list[int] = list(
+            d.get("current_hand_stacks") or [starting_stack] * seat_count
+        )
+        state = _make_state(seat_count, tuple(current_hand_stacks), sb_idx)
+
+        # Find the start of the current hand within the action log.
+        start = 0
+        for i in range(len(action_log) - 1, -1, -1):
+            if action_log[i].get("type") == "hand_break":
+                start = i + 1
+                break
+
+        for entry in action_log[start:]:
             t = entry["type"]
             if t == "deal_hole":
                 state.deal_hole(entry["card"])
@@ -502,17 +712,44 @@ class GameState:
                 state.check_or_call()
             elif t in ("raise", "bet"):
                 state.complete_bet_or_raise_to(entry["amount"])
-        g = cls(state, seat_count, starting_stack, d["game_id"], list(action_log))
+
+        seat_tokens_raw = d.get("seat_tokens")
+        seat_tokens: dict[int, str] | None = (
+            {int(k): v for k, v in seat_tokens_raw.items()} if seat_tokens_raw else None
+        )
+        seats_open_raw = d.get("seats_open")
+        # Important: preserve an empty list (all seats claimed). `or None`
+        # would regenerate every seat as open.
+        seats_open: list[int] | None = (
+            list(seats_open_raw) if seats_open_raw is not None else None
+        )
+
+        g = cls(
+            state,
+            seat_count,
+            starting_stack,
+            d["game_id"],
+            action_log,
+            created_at=d.get("created_at"),
+            hand_number=int(d.get("hand_number", 1)),
+            sb_idx=sb_idx,
+            current_hand_stacks=current_hand_stacks,
+            archived_history=list(d.get("archived_history") or []),
+            seat_tokens=seat_tokens,
+            seats_open=seats_open,
+            game_ended=bool(d.get("game_ended", False)),
+        )
         g.bluffs = {int(k): v for k, v in d.get("bluffs", {}).items()}
         g.chat_log = list(d.get("chat_log", []))
         return g
 
 
 def create_game(seat_count: int = 2, starting_stack: int = 1000) -> "GameState":
+    """Create a new game and persist it. Returns the live GameState."""
     from poker import store
 
-    store.clear()  # remove any previous game's state key from Redis
-    state = _make_state(seat_count, starting_stack)
+    starting_stacks = tuple(starting_stack for _ in range(seat_count))
+    state = _make_state(seat_count, starting_stacks, sb_idx=0)
     game_id = str(uuid.uuid4())
     action_log: list[dict[str, Any]] = []
     for _ in range(2 * seat_count):
@@ -520,12 +757,23 @@ def create_game(seat_count: int = 2, starting_stack: int = 1000) -> "GameState":
         state.deal_hole(card)
         action_log.append({"type": "deal_hole", "card": card})
     g = GameState(state, seat_count, starting_stack, game_id, action_log)
-    store.save(g.to_dict())
+    store.save_game(g.to_dict())
     return g
 
 
-def get_game() -> "GameState | None":
+def get_game(game_id: str) -> "GameState | None":
     from poker import store
 
-    d = store.load()
+    d = store.get_game(game_id)
     return GameState.from_dict(d) if d else None
+
+
+def list_games() -> list[GameSummary]:
+    """All known games, oldest first, summarized for menus."""
+    from poker import store
+
+    summaries: list[GameSummary] = []
+    for d in store.list_games():
+        g = GameState.from_dict(d)
+        summaries.append(g.summary())
+    return summaries

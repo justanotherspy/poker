@@ -1,7 +1,11 @@
-"""Redis-backed game state persistence.
+"""Redis-backed persistence for many concurrent games.
 
 If REDIS_URL is not set, functions fall back to an in-process memory store
 so the server works correctly in single-machine / local-dev mode.
+
+The store is keyed exclusively by `game_id`. There is no notion of an
+"active" game; the spectator UI selects one explicitly and agents discover
+games via the `list_games` MCP tool.
 """
 
 import json
@@ -16,12 +20,17 @@ import redis as _redis_module
 _Redis = _redis_module.Redis
 
 # In-memory fallback used when REDIS_URL is unset.
-_memory: dict[str, Any] = {}
-_memory_lock = threading.Lock()
+_memory: dict[str, Any] = {"games": {}}
+_memory_lock_factory_lock = threading.Lock()
+_memory_locks: dict[str, threading.Lock] = {}
 
 # TTL for Redis game state keys: 24 hours.  Prevents stale blobs accumulating
-# if a game is abandoned without an explicit clear().
+# if a game is abandoned without an explicit delete.
 _STATE_TTL = 86400
+
+_STATE_KEY = "game:{game_id}:state"
+_LOCK_KEY = "lock:game:{game_id}"
+_SCAN_PATTERN = "game:*:state"
 
 
 def _client() -> "_Redis | None":
@@ -31,21 +40,30 @@ def _client() -> "_Redis | None":
     return _redis_module.from_url(url, decode_responses=True)
 
 
-@contextmanager
-def lock(timeout: float = 5.0) -> Generator[None, None, None]:
-    """Exclusive lock around a load-operate-save cycle.
+def _memory_lock_for(game_id: str) -> threading.Lock:
+    with _memory_lock_factory_lock:
+        existing = _memory_locks.get(game_id)
+        if existing is None:
+            existing = threading.Lock()
+            _memory_locks[game_id] = existing
+        return existing
 
-    Uses a Redis SETNX lock when Redis is available, or the in-process
-    threading.Lock when running in memory-only mode.  Callers should wrap
-    the full get_game() → apply → save() sequence inside this context.
+
+@contextmanager
+def lock(game_id: str, timeout: float = 5.0) -> Generator[None, None, None]:
+    """Exclusive lock around one game's load-operate-save cycle.
+
+    Uses a per-game Redis SETNX lock when Redis is available, or a per-game
+    threading.Lock in memory-only mode. Two different games can be modified
+    concurrently; the same game is serialized.
     """
     r = _client()
     if r is None:
-        with _memory_lock:
+        with _memory_lock_for(game_id):
             yield
         return
 
-    lock_key = "lock:active_game"
+    lock_key = _LOCK_KEY.format(game_id=game_id)
     deadline = time.monotonic() + timeout
     acquired = False
     while time.monotonic() < deadline:
@@ -54,42 +72,55 @@ def lock(timeout: float = 5.0) -> Generator[None, None, None]:
             break
         time.sleep(0.05)
     if not acquired:
-        raise TimeoutError("Could not acquire game lock")
+        raise TimeoutError(f"Could not acquire lock for game {game_id}")
     try:
         yield
     finally:
         r.delete(lock_key)
 
 
-def save(game_dict: dict[str, Any]) -> None:
+def save_game(game_dict: dict[str, Any]) -> None:
     r = _client()
-    if r is None:
-        _memory["active"] = game_dict
-        return
     game_id = game_dict["game_id"]
-    r.set(f"game:{game_id}:state", json.dumps(game_dict), ex=_STATE_TTL)
-    r.set("active_game", game_id)
+    if r is None:
+        _memory["games"][game_id] = game_dict
+        return
+    r.set(
+        _STATE_KEY.format(game_id=game_id),
+        json.dumps(game_dict),
+        ex=_STATE_TTL,
+    )
 
 
-def load() -> dict[str, Any] | None:
+def get_game(game_id: str) -> dict[str, Any] | None:
     r = _client()
     if r is None:
-        return _memory.get("active")
-    game_id = r.get("active_game")
-    if not game_id:
-        return None
-    raw = r.get(f"game:{game_id}:state")
+        result = _memory["games"].get(game_id)
+        return dict(result) if result is not None else None
+    raw = r.get(_STATE_KEY.format(game_id=game_id))
     if not raw:
         return None
     return json.loads(str(raw))  # type: ignore[no-any-return]
 
 
-def clear() -> None:
+def delete_game(game_id: str) -> bool:
     r = _client()
     if r is None:
-        _memory.pop("active", None)
-        return
-    game_id = r.get("active_game")
-    if game_id:
-        r.delete(f"game:{game_id}:state")
-    r.delete("active_game")
+        return _memory["games"].pop(game_id, None) is not None
+    deleted = r.delete(_STATE_KEY.format(game_id=game_id))
+    return bool(deleted)
+
+
+def list_games() -> list[dict[str, Any]]:
+    """Return every game's serialized dict, oldest first."""
+    r = _client()
+    if r is None:
+        games: list[dict[str, Any]] = [dict(g) for g in _memory["games"].values()]
+    else:
+        games = []
+        for key in r.scan_iter(match=_SCAN_PATTERN):
+            raw = r.get(key)
+            if raw:
+                games.append(json.loads(str(raw)))
+    games.sort(key=lambda g: g.get("created_at", 0))
+    return games

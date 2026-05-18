@@ -1,11 +1,18 @@
-// Top-level orchestrator for the spectator route. Reads live view from
-// the WebSocket hook, manages theme state, lays out topbar / stage /
-// rail.
+// Top-level orchestrator for the spectator route.
+//
+// Wraps the tree in <AuthProvider> so the login hash is available to the
+// API client and WS hook. Renders <LoginModal> when no hash is present.
+// Otherwise reads ?game=<id> from the URL, subscribes to that game via
+// useSpectatorState, and exposes a Games button (in the Topbar) that
+// opens <GameMenuModal> for create/delete/switch.
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { AuthProvider, useAuth } from "@/lib/auth";
 import { useSpectatorState } from "@/lib/useSpectatorState";
+import { GameMenuModal } from "./GameMenuModal";
+import { LoginModal } from "./LoginModal";
 import { Rail } from "./Rail";
 import { StatusBar } from "./StatusBar";
 import { Table } from "./Table";
@@ -14,11 +21,17 @@ import { Topbar } from "./Topbar";
 type Theme = "light" | "dark";
 
 export function SpectatorPage() {
-  const { view, connectionState } = useSpectatorState();
+  return (
+    <AuthProvider>
+      <SpectatorPageInner />
+    </AuthProvider>
+  );
+}
+
+function SpectatorPageInner() {
+  const { hash, ready } = useAuth();
   const [theme, setTheme] = useState<Theme>("light");
 
-  // Read persisted theme on mount (avoids the pre-paint script's value
-  // being overwritten by React's initial render).
   useEffect(() => {
     try {
       const t = localStorage.getItem("theme");
@@ -39,37 +52,111 @@ export function SpectatorPage() {
 
   const toggleTheme = () => setTheme((t) => (t === "light" ? "dark" : "light"));
 
+  if (!ready) {
+    return <div className="spectator-shell" />;
+  }
+
+  if (!hash) {
+    return (
+      <div className="spectator-shell">
+        <LoginModal />
+      </div>
+    );
+  }
+
+  return <AuthedShell theme={theme} onToggleTheme={toggleTheme} />;
+}
+
+function AuthedShell({
+  theme,
+  onToggleTheme,
+}: {
+  theme: Theme;
+  onToggleTheme: () => void;
+}) {
+  const [gameId, setGameIdState] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const p = new URLSearchParams(window.location.search);
+    return p.get("game");
+  });
+  const [menuOpen, setMenuOpen] = useState(false);
+  const { view, connectionState, gameMissing } = useSpectatorState(gameId);
+  const { logout } = useAuth();
+
+  const setGameId = useCallback((next: string | null) => {
+    setGameIdState(next);
+    try {
+      const url = new URL(window.location.href);
+      if (next === null) {
+        url.searchParams.delete("game");
+      } else {
+        url.searchParams.set("game", next);
+      }
+      window.history.replaceState(null, "", url.toString());
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // If the watched game vanishes (deleted from another tab, or we just
+  // deleted it), drop selection and bounce back to the menu.
+  useEffect(() => {
+    if (gameMissing) {
+      setGameId(null);
+      setMenuOpen(true);
+    }
+  }, [gameMissing, setGameId]);
+
   return (
     <div className="spectator-shell">
       <Topbar
         view={view}
         theme={theme}
-        onToggleTheme={toggleTheme}
+        onToggleTheme={onToggleTheme}
         connectionState={connectionState}
+        onOpenGames={() => setMenuOpen(true)}
+        onLogout={logout}
       />
       <main className="proto-main">
         <section className="proto-stage">
           <div className="stage-felt-wrap">
-            {view ? <Table view={view} feltW={720} /> : <EmptyTable />}
+            {view ? (
+              <Table view={view} feltW={720} />
+            ) : (
+              <EmptyTable onOpenGames={() => setMenuOpen(true)} />
+            )}
           </div>
           {view ? <StatusBar view={view} /> : <EmptyStatus />}
         </section>
         {view ? <Rail view={view} /> : <EmptyRail />}
       </main>
+      <GameMenuModal
+        open={menuOpen}
+        currentGameId={gameId}
+        onClose={() => setMenuOpen(false)}
+        onSelect={setGameId}
+      />
     </div>
   );
 }
 
-function EmptyTable() {
+function EmptyTable({ onOpenGames }: { onOpenGames: () => void }) {
   return (
     <div
       style={{
         fontFamily: "var(--serif)",
         fontSize: 18,
         color: "var(--text-2)",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 16,
       }}
     >
-      Waiting for an active table…
+      <span>No game selected.</span>
+      <button className="modal-button modal-button--primary" onClick={onOpenGames}>
+        open games menu
+      </button>
     </div>
   );
 }

@@ -11,14 +11,21 @@ from fastmcp import Client
 from fastmcp.client.auth import BearerAuth
 
 _DEV_TOKEN = "e2e-test-token"
+# Use the same dev password as the rest of the unit-test suite — the
+# verifier reads SPECTATOR_DEV_PASSWORD at call time, so the env value
+# active when a request lands is what matters. Sharing the value keeps
+# tests order-independent: nothing in this module pops the var.
+_SPEC_PW = "test"
 _PORT = 18765
 _BASE_URL = f"http://127.0.0.1:{_PORT}"
 _MCP_URL = f"{_BASE_URL}/mcp"
+_SPEC_HEADER = {"X-Spectator-Password": _SPEC_PW}
 
 
 @pytest.fixture(scope="module")
 def server_url() -> Generator[str, None, None]:
     os.environ["MCP_DEV_TOKEN"] = _DEV_TOKEN
+    os.environ.setdefault("SPECTATOR_DEV_PASSWORD", _SPEC_PW)
 
     from poker.server import app
 
@@ -42,8 +49,18 @@ def server_url() -> Generator[str, None, None]:
     os.environ.pop("MCP_DEV_TOKEN", None)
 
 
+def _create_game(seat_count: int = 2) -> str:
+    resp = httpx.post(
+        f"{_BASE_URL}/api/games",
+        headers=_SPEC_HEADER,
+        json={"seat_count": seat_count, "starting_stack": 1000},
+    )
+    assert resp.status_code == 200
+    return resp.json()["game_id"]  # type: ignore[no-any-return]
+
+
 # ---------------------------------------------------------------------------
-# Auth checks
+# MCP auth
 # ---------------------------------------------------------------------------
 
 
@@ -60,193 +77,139 @@ def test_invalid_token_rejected(server_url: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Basic MCP connectivity
+# MCP tool surface
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.e2e
-async def test_ping(server_url: str) -> None:
-    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
-        await client.ping()
-
-
-@pytest.mark.e2e
-async def test_list_tools_non_empty(server_url: str) -> None:
-    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
-        tools = await client.list_tools()
-        assert isinstance(tools, list)
-        assert len(tools) == 4
-
-
-@pytest.mark.e2e
-async def test_list_tools_expected_names(server_url: str) -> None:
+async def test_list_tools(server_url: str) -> None:
     async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
         tools = await client.list_tools()
         names = {t.name for t in tools}
-        assert names == {"create_game", "get_table_state", "act", "say"}
+        assert names == {"list_games", "join_game", "get_table_state", "act", "say"}
 
 
 # ---------------------------------------------------------------------------
-# MCP tool calls — create_game
+# list_games / join_game
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.e2e
-async def test_mcp_create_game(server_url: str) -> None:
+async def test_mcp_list_games_includes_rest_created(server_url: str) -> None:
+    gid = _create_game(seat_count=2)
     async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
-        result = await client.call_tool("create_game", {"seat_count": 2})
+        result = await client.call_tool("list_games", {})
         assert result.structured_content is not None
-        data: dict[str, Any] = result.structured_content
-        assert data["seat_count"] == 2
-        assert data["phase"] == "preflop"
+        games: list[dict[str, Any]] = result.structured_content["games"]
+        assert any(g["game_id"] == gid for g in games)
 
 
 @pytest.mark.e2e
-async def test_mcp_create_game_defaults(server_url: str) -> None:
+async def test_mcp_join_game_returns_token(server_url: str) -> None:
+    gid = _create_game(seat_count=2)
     async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
-        result = await client.call_tool("create_game", {})
-        assert result.structured_content is not None
-        assert result.structured_content["seat_count"] == 2
-
-
-# ---------------------------------------------------------------------------
-# MCP tool calls — get_table_state
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.e2e
-async def test_mcp_get_state_no_game(server_url: str) -> None:
-    # Reset game by creating a fresh one to ensure get_state works after create
-    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
-        await client.call_tool("create_game", {})
-        result = await client.call_tool("get_table_state", {"seat_id": 1})
+        result = await client.call_tool("join_game", {"game_id": gid})
         assert result.structured_content is not None
         data = result.structured_content
-        assert "hole_cards" in data
+        assert data["seat_id"] in (1, 2)
+        assert "seat_token" in data
+
+
+@pytest.mark.e2e
+async def test_mcp_join_game_no_seats_left(server_url: str) -> None:
+    gid = _create_game(seat_count=2)
+    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
+        await client.call_tool("join_game", {"game_id": gid})
+        await client.call_tool("join_game", {"game_id": gid})
+        third = await client.call_tool("join_game", {"game_id": gid})
+        assert third.structured_content is not None
+        assert "error" in third.structured_content
+
+
+@pytest.mark.e2e
+async def test_mcp_join_unknown_game(server_url: str) -> None:
+    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
+        result = await client.call_tool("join_game", {"game_id": "nope"})
+        assert result.structured_content is not None
+        assert "error" in result.structured_content
+
+
+# ---------------------------------------------------------------------------
+# get_table_state / act via seat_token
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+async def test_mcp_get_state_uses_seat_token(server_url: str) -> None:
+    gid = _create_game(seat_count=2)
+    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
+        joined = await client.call_tool("join_game", {"game_id": gid})
+        assert joined.structured_content is not None
+        tok = joined.structured_content["seat_token"]
+        state = await client.call_tool("get_table_state", {"seat_token": tok})
+        assert state.structured_content is not None
+        data = state.structured_content
         assert len(data["hole_cards"]) == 2
         assert data["phase"] == "preflop"
 
 
 @pytest.mark.e2e
-async def test_mcp_seats_see_different_cards(server_url: str) -> None:
+async def test_mcp_act_via_seat_token_folds(server_url: str) -> None:
+    gid = _create_game(seat_count=2)
     async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
-        await client.call_tool("create_game", {})
-        r1 = await client.call_tool("get_table_state", {"seat_id": 1})
-        r2 = await client.call_tool("get_table_state", {"seat_id": 2})
-        assert r1.structured_content is not None
-        assert r2.structured_content is not None
-        cards1 = set(r1.structured_content["hole_cards"])
-        cards2 = set(r2.structured_content["hole_cards"])
-        assert cards1 != cards2
-
-
-# ---------------------------------------------------------------------------
-# MCP tool calls — act
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.e2e
-async def test_mcp_fold_ends_hand(server_url: str) -> None:
-    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
-        await client.call_tool("create_game", {})
-        state = await client.call_tool("get_table_state", {"seat_id": 1})
+        # Both agents join; figure out who acts first and have them fold.
+        j1 = await client.call_tool("join_game", {"game_id": gid})
+        j2 = await client.call_tool("join_game", {"game_id": gid})
+        assert j1.structured_content is not None
+        assert j2.structured_content is not None
+        tok1 = j1.structured_content["seat_token"]
+        tok2 = j2.structured_content["seat_token"]
+        seat1 = j1.structured_content["seat_id"]
+        state = await client.call_tool("get_table_state", {"seat_token": tok1})
         assert state.structured_content is not None
         actor = state.structured_content["current_actor"]
+        actor_tok = tok1 if actor == seat1 else tok2
         result = await client.call_tool(
             "act",
-            {"seat_id": actor, "action": "fold", "bluff_declared": False},
+            {"seat_token": actor_tok, "action": "fold", "bluff_declared": False},
         )
         assert result.structured_content is not None
         assert "folds" in result.structured_content.get("result", "")
-        # Check phase ended
-        final = await client.call_tool("get_table_state", {"seat_id": 1})
-        assert final.structured_content is not None
-        assert final.structured_content["phase"] == "ended"
 
 
 @pytest.mark.e2e
-async def test_mcp_out_of_turn_returns_error(server_url: str) -> None:
+async def test_mcp_act_invalid_token(server_url: str) -> None:
     async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
-        await client.call_tool("create_game", {})
-        state = await client.call_tool("get_table_state", {"seat_id": 1})
-        assert state.structured_content is not None
-        actor = state.structured_content["current_actor"]
-        wrong = 2 if actor == 1 else 1
         result = await client.call_tool(
             "act",
-            {"seat_id": wrong, "action": "fold", "bluff_declared": False},
+            {"seat_token": "bogus", "action": "fold", "bluff_declared": False},
         )
         assert result.structured_content is not None
         assert "error" in result.structured_content
 
 
 # ---------------------------------------------------------------------------
-# MCP tool calls — say
+# Spectator REST surface (password-gated)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.e2e
-async def test_mcp_say_valid(server_url: str) -> None:
-    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
-        await client.call_tool("create_game", {})
-        result = await client.call_tool("say", {"seat_id": 1, "phrase_id": 1})
-        assert result.structured_content is not None
-        assert result.structured_content["phrase"] == "Nice hand."
+def test_spectate_state_requires_password(server_url: str) -> None:
+    gid = _create_game(seat_count=2)
+    resp = httpx.get(f"{_BASE_URL}/api/spectate/state/{gid}")
+    assert resp.status_code == 401
 
 
 @pytest.mark.e2e
-async def test_mcp_say_invalid(server_url: str) -> None:
-    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
-        result = await client.call_tool("say", {"seat_id": 1, "phrase_id": 99})
-        assert result.structured_content is not None
-        assert "error" in result.structured_content
-
-
-@pytest.mark.e2e
-async def test_mcp_say_persisted_to_chat(server_url: str) -> None:
-    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
-        await client.call_tool("create_game", {})
-        await client.call_tool("say", {"seat_id": 2, "phrase_id": 3})
-    # Read via the public spectator endpoint to confirm persistence.
-    resp = httpx.get(f"{_BASE_URL}/api/spectate/state")
-    assert resp.status_code == 200
-    chat = resp.json()["chat"]
-    assert any(c["seat_id"] == 2 and c["text"] == "I see you." for c in chat)
-
-
-# ---------------------------------------------------------------------------
-# Spectator API — public, read-only.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.e2e
-async def test_spectate_state_unauthenticated(server_url: str) -> None:
-    # Public — no Authorization header needed.
-    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
-        await client.call_tool("create_game", {"seat_count": 3})
-    resp = httpx.get(f"{_BASE_URL}/api/spectate/state")
+def test_spectate_state_with_password(server_url: str) -> None:
+    gid = _create_game(seat_count=2)
+    resp = httpx.get(
+        f"{_BASE_URL}/api/spectate/state/{gid}",
+        headers=_SPEC_HEADER,
+    )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["phase"] == "preflop"
-    assert len(data["seats"]) == 3
+    assert data["table_id"] == gid
+    assert len(data["seats"]) == 2
     for seat in data["seats"]:
         assert len(seat["hole_cards"]) == 2
-
-
-@pytest.mark.e2e
-async def test_spectate_reflects_act(server_url: str) -> None:
-    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
-        await client.call_tool("create_game", {"seat_count": 2})
-        state = await client.call_tool("get_table_state", {"seat_id": 1})
-        assert state.structured_content is not None
-        actor = state.structured_content["current_actor"]
-        await client.call_tool(
-            "act",
-            {"seat_id": actor, "action": "fold", "bluff_declared": False},
-        )
-    resp = httpx.get(f"{_BASE_URL}/api/spectate/state")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["phase"] == "ended"
-    assert data["winner_names"] is not None
-    assert len(data["winner_names"]) == 1

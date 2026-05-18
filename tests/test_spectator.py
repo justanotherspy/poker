@@ -1,20 +1,6 @@
 """Unit tests for the spectator view model."""
 
-from unittest.mock import patch
-
-import fakeredis
-import pytest
-
-import poker.store as store_module
 from poker.game import GameState, _position_for, create_game
-
-
-@pytest.fixture(autouse=True)
-def fake_redis() -> fakeredis.FakeRedis:  # type: ignore[type-arg]
-    r: fakeredis.FakeRedis = fakeredis.FakeRedis(decode_responses=True)  # type: ignore[type-arg]
-    store_module._memory.clear()
-    with patch.object(store_module, "_client", return_value=r):
-        yield r
 
 
 def _actor(g: GameState) -> int:
