@@ -15,8 +15,9 @@ RUN bun run build
 # Stage 3: Python runtime
 FROM python:3.13-slim@sha256:dc1546eefcbe8caaa1f004f16ab76b204b5e1dbd58ff81b899f21cd40541232f
 COPY --from=ghcr.io/astral-sh/uv:latest@sha256:1025398289b62de8269e70c45b91ffa37c373f38118d7da036fb8bb8efc85d97 /uv /usr/local/bin/uv
+RUN groupadd --system poker && useradd --system --gid poker --create-home poker \
+    && install -d -o poker -g poker /app
 WORKDIR /app
-RUN groupadd --system poker && useradd --system --gid poker --create-home poker
 COPY --chown=poker:poker pyproject.toml uv.lock ./
 COPY --chown=poker:poker src/ ./src/
 COPY --from=frontend-build --chown=poker:poker /app/out ./src/poker/static/
