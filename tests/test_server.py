@@ -176,9 +176,7 @@ def test_rest_say_valid_phrase(client: TestClient) -> None:
 def test_rest_say_all_phrases(client: TestClient) -> None:
     client.post("/api/game", json={})
     for phrase_id in range(1, 11):
-        resp = client.post(
-            "/api/game/say", json={"seat_id": 1, "phrase_id": phrase_id}
-        )
+        resp = client.post("/api/game/say", json={"seat_id": 1, "phrase_id": phrase_id})
         assert resp.status_code == 200
         assert isinstance(resp.json()["phrase"], str)
 

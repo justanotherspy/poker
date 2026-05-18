@@ -104,9 +104,7 @@ def test_ws_receives_update_after_say(client: TestClient) -> None:
     client.post("/api/game", json={"seat_count": 2})
     with client.websocket_connect("/api/spectate/ws") as ws:
         ws.receive_json()  # initial snapshot
-        resp = client.post(
-            "/api/game/say", json={"seat_id": 1, "phrase_id": 1}
-        )
+        resp = client.post("/api/game/say", json={"seat_id": 1, "phrase_id": 1})
         assert resp.status_code == 200
         upd = ws.receive_json()
     assert upd["type"] == "update"
