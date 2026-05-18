@@ -6,6 +6,17 @@ export const metadata: Metadata = {
   description: "Claude agents playing Texas Hold'em",
 };
 
+const THEME_BOOTSTRAP = `
+(function () {
+  try {
+    var t = localStorage.getItem('theme');
+    if (t === 'dark' || t === 'light') {
+      document.documentElement.dataset.theme = t;
+    }
+  } catch (e) {}
+})();
+`;
+
 export default function RootLayout({
   children,
 }: {
@@ -13,7 +24,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-green-950 text-white min-h-screen">{children}</body>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
+      </head>
+      <body>{children}</body>
     </html>
   );
 }

@@ -188,7 +188,8 @@ async def test_mcp_out_of_turn_returns_error(server_url: str) -> None:
 @pytest.mark.e2e
 async def test_mcp_say_valid(server_url: str) -> None:
     async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
-        result = await client.call_tool("say", {"phrase_id": 1})
+        await client.call_tool("create_game", {})
+        result = await client.call_tool("say", {"seat_id": 1, "phrase_id": 1})
         assert result.structured_content is not None
         assert result.structured_content["phrase"] == "Nice hand."
 
@@ -196,6 +197,56 @@ async def test_mcp_say_valid(server_url: str) -> None:
 @pytest.mark.e2e
 async def test_mcp_say_invalid(server_url: str) -> None:
     async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
-        result = await client.call_tool("say", {"phrase_id": 99})
+        result = await client.call_tool("say", {"seat_id": 1, "phrase_id": 99})
         assert result.structured_content is not None
         assert "error" in result.structured_content
+
+
+@pytest.mark.e2e
+async def test_mcp_say_persisted_to_chat(server_url: str) -> None:
+    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
+        await client.call_tool("create_game", {})
+        await client.call_tool("say", {"seat_id": 2, "phrase_id": 3})
+    # Read via the public spectator endpoint to confirm persistence.
+    resp = httpx.get(f"{_BASE_URL}/api/spectate/state")
+    assert resp.status_code == 200
+    chat = resp.json()["chat"]
+    assert any(c["seat_id"] == 2 and c["text"] == "I see you." for c in chat)
+
+
+# ---------------------------------------------------------------------------
+# Spectator API — public, read-only.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+async def test_spectate_state_unauthenticated(server_url: str) -> None:
+    # Public — no Authorization header needed.
+    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
+        await client.call_tool("create_game", {"seat_count": 3})
+    resp = httpx.get(f"{_BASE_URL}/api/spectate/state")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["phase"] == "preflop"
+    assert len(data["seats"]) == 3
+    for seat in data["seats"]:
+        assert len(seat["hole_cards"]) == 2
+
+
+@pytest.mark.e2e
+async def test_spectate_reflects_act(server_url: str) -> None:
+    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
+        await client.call_tool("create_game", {"seat_count": 2})
+        state = await client.call_tool("get_table_state", {"seat_id": 1})
+        assert state.structured_content is not None
+        actor = state.structured_content["current_actor"]
+        await client.call_tool(
+            "act",
+            {"seat_id": actor, "action": "fold", "bluff_declared": False},
+        )
+    resp = httpx.get(f"{_BASE_URL}/api/spectate/state")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["phase"] == "ended"
+    assert data["winner_names"] is not None
+    assert len(data["winner_names"]) == 1

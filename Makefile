@@ -1,4 +1,4 @@
-.PHONY: test e2e lint format typecheck semgrep check \
+.PHONY: test e2e lint format format-check typecheck semgrep check \
         frontend-install frontend-build frontend-dev \
         docker-build docker-run \
         gen-api-key
@@ -16,13 +16,20 @@ lint:
 format:
 	uv run black src tests
 
+# Mirrors the CI "Python Format (black)" check exactly.
+format-check:
+	uv run black --check src tests
+
 typecheck:
 	uv run mypy src
 
+# Scans the whole repo (including frontend/) to match the CI semgrep job,
+# which runs `semgrep --config auto .` and surfaces findings via SARIF
+# upload to the GitHub Advanced Security "Semgrep OSS" check.
 semgrep:
-	semgrep --config auto src
+	semgrep --config auto --error .
 
-check: lint typecheck semgrep test frontend-typecheck frontend-build
+check: format-check lint typecheck semgrep test frontend-typecheck frontend-build
 
 # Frontend (Bun + Next.js)
 frontend-install:

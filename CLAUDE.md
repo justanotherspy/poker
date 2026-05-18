@@ -48,6 +48,8 @@ The `/mcp` endpoint normally requires a SHA-256-hashed API key via `Authorizatio
 
 The `claude-poker-local` MCP server in `.mcp.json` connects to `http://localhost:8000/mcp` using `POKER_MCP_API_KEY` from your environment. Set that to your `MCP_DEV_TOKEN` value when working locally.
 
+The `/api/spectate/*` endpoints (`GET /api/spectate/state` and `WS /api/spectate/ws`) are intentionally **public** — read-only table snapshots that power the spectator UI at `/`. They expose every seat's hole cards by design.
+
 ## MCP Servers
 
 Configured in `.mcp.json`:
