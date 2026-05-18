@@ -167,21 +167,40 @@ def test_rest_act_persists_to_redis(client: TestClient) -> None:
 
 
 def test_rest_say_valid_phrase(client: TestClient) -> None:
-    resp = client.post("/api/game/say", json={"phrase_id": 1})
+    client.post("/api/game", json={})
+    resp = client.post("/api/game/say", json={"seat_id": 1, "phrase_id": 1})
     assert resp.status_code == 200
     assert resp.json()["phrase"] == "Nice hand."
 
 
 def test_rest_say_all_phrases(client: TestClient) -> None:
+    client.post("/api/game", json={})
     for phrase_id in range(1, 11):
-        resp = client.post("/api/game/say", json={"phrase_id": phrase_id})
+        resp = client.post(
+            "/api/game/say", json={"seat_id": 1, "phrase_id": phrase_id}
+        )
         assert resp.status_code == 200
         assert isinstance(resp.json()["phrase"], str)
 
 
 def test_rest_say_invalid_phrase(client: TestClient) -> None:
-    resp = client.post("/api/game/say", json={"phrase_id": 99})
+    client.post("/api/game", json={})
+    resp = client.post("/api/game/say", json={"seat_id": 1, "phrase_id": 99})
     assert resp.status_code == 422
+
+
+def test_rest_say_persists_to_chat_log(client: TestClient) -> None:
+    client.post("/api/game", json={})
+    client.post("/api/game/say", json={"seat_id": 2, "phrase_id": 1})
+    spec = client.get("/api/spectate/state").json()
+    assert len(spec["chat"]) == 1
+    assert spec["chat"][0]["seat_id"] == 2
+    assert spec["chat"][0]["text"] == "Nice hand."
+
+
+def test_rest_say_no_game_returns_404(client: TestClient) -> None:
+    resp = client.post("/api/game/say", json={"seat_id": 1, "phrase_id": 1})
+    assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
