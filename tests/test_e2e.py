@@ -9,9 +9,9 @@ from typing import Any
 import httpx
 import pytest
 import uvicorn
-from websockets.asyncio.client import connect as ws_connect
 from fastmcp import Client
 from fastmcp.client.auth import BearerAuth
+from websockets.asyncio.client import connect as ws_connect
 
 _DEV_TOKEN = "e2e-test-token"
 # Use the same dev password as the rest of the unit-test suite — the
@@ -32,7 +32,9 @@ def server_url() -> Generator[str, None, None]:
 
     from poker.server import app
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=_PORT, log_level="error", ws="websockets-sansio")
+    config = uvicorn.Config(
+        app, host="127.0.0.1", port=_PORT, log_level="error", ws="websockets-sansio"
+    )
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
