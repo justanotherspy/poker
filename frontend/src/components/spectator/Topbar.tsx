@@ -4,7 +4,7 @@
 "use client";
 
 import type { ConnectionState } from "@/lib/useSpectatorState";
-import type { SpectatorView } from "@/lib/types";
+import type { PlayerMode, SpectatorSeat, SpectatorView } from "@/lib/types";
 
 export function Topbar({
   view,
@@ -13,6 +13,9 @@ export function Topbar({
   connectionState,
   onOpenGames,
   onLogout,
+  playerMode,
+  onSetPlayerMode,
+  heroSeat,
 }: {
   view: SpectatorView | null;
   theme: "light" | "dark";
@@ -20,6 +23,9 @@ export function Topbar({
   connectionState: ConnectionState;
   onOpenGames: () => void;
   onLogout: () => void;
+  playerMode: PlayerMode;
+  onSetPlayerMode: (mode: PlayerMode) => void;
+  heroSeat?: SpectatorSeat | null;
 }) {
   const tableLabel = view
     ? `table #${view.table_id.slice(0, 8)} · ${view.seats.length}-max NLH`
@@ -30,6 +36,13 @@ export function Topbar({
       : connectionState === "reconnecting"
         ? "conn-pill conn-pill--reconnecting"
         : "conn-pill";
+
+  const contextLabel =
+    playerMode === "player" && heroSeat
+      ? `seat ${heroSeat.seat_id} · ${heroSeat.name} · ${heroSeat.position}`
+      : playerMode === "player"
+        ? "player — select a seat"
+        : "spectating";
 
   return (
     <header className="topbar">
@@ -52,12 +65,31 @@ export function Topbar({
         </div>
         <span className="topbar-sep">·</span>
         <span className="topbar-context">
-          spectating <span className="meta">{tableLabel}</span>
+          {contextLabel}{" "}
+          {playerMode === "spectator" && (
+            <span className="meta">{tableLabel}</span>
+          )}
         </span>
       </div>
       <div className="topbar-right">
         {view && <span className="meta">hand #{view.hand_number}</span>}
         <span className={connCls}>{connectionState}</span>
+        {view && (
+          <div className="seg-group">
+            <button
+              className={`seg seg--sm${playerMode === "spectator" ? " is-active" : ""}`}
+              onClick={() => onSetPlayerMode("spectator")}
+            >
+              spectator
+            </button>
+            <button
+              className={`seg seg--sm${playerMode === "player" ? " is-active" : ""}`}
+              onClick={() => onSetPlayerMode("player")}
+            >
+              player
+            </button>
+          </div>
+        )}
         <button className="topbar-button" onClick={onOpenGames}>
           games
         </button>

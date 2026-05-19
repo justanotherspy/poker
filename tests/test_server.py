@@ -262,3 +262,161 @@ async def test_act_with_invalid_table_chat_silently_ignored() -> None:
     updated = get_game(g.game_id)
     assert updated is not None
     assert updated.chat_log == []
+
+
+# ---------------------------------------------------------------------------
+# /api/player/* — REST player endpoints (spectator-password gated)
+# ---------------------------------------------------------------------------
+
+
+def test_player_join_requires_auth(client: TestClient) -> None:
+    created = client.post(
+        "/api/games", headers=SPECTATOR_HEADER, json={"seat_count": 2}
+    ).json()
+    resp = client.post(f"/api/player/join/{created['game_id']}")
+    assert resp.status_code == 401
+
+
+def test_player_join_unknown_game(client: TestClient) -> None:
+    resp = client.post("/api/player/join/no-such-game", headers=SPECTATOR_HEADER)
+    assert resp.status_code == 404
+
+
+def test_player_join_returns_seat_token(client: TestClient) -> None:
+    created = client.post(
+        "/api/games", headers=SPECTATOR_HEADER, json={"seat_count": 2}
+    ).json()
+    resp = client.post(
+        f"/api/player/join/{created['game_id']}", headers=SPECTATOR_HEADER
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "seat_token" in data
+    assert "seat_id" in data
+    assert data["game_id"] == created["game_id"]
+
+
+def test_player_join_no_seats_available(client: TestClient) -> None:
+    created = client.post(
+        "/api/games", headers=SPECTATOR_HEADER, json={"seat_count": 2}
+    ).json()
+    game_id = created["game_id"]
+    client.post(f"/api/player/join/{game_id}", headers=SPECTATOR_HEADER)
+    client.post(f"/api/player/join/{game_id}", headers=SPECTATOR_HEADER)
+    resp = client.post(f"/api/player/join/{game_id}", headers=SPECTATOR_HEADER)
+    assert resp.status_code == 409
+
+
+def test_player_state_requires_auth(client: TestClient) -> None:
+    resp = client.get("/api/player/state?seat_token=x")
+    assert resp.status_code == 401
+
+
+def test_player_state_invalid_token(client: TestClient) -> None:
+    resp = client.get("/api/player/state?seat_token=bogus", headers=SPECTATOR_HEADER)
+    assert resp.status_code == 404
+
+
+def test_player_state_returns_table_view(client: TestClient) -> None:
+    created = client.post(
+        "/api/games", headers=SPECTATOR_HEADER, json={"seat_count": 2}
+    ).json()
+    game_id = created["game_id"]
+    joined = client.post(f"/api/player/join/{game_id}", headers=SPECTATOR_HEADER).json()
+    resp = client.get(
+        f"/api/player/state?seat_token={joined['seat_token']}",
+        headers=SPECTATOR_HEADER,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["seat_id"] == joined["seat_id"]
+    assert len(data["hole_cards"]) == 2
+    assert "to_call" in data
+    assert "min_raise" in data
+
+
+def test_player_say_requires_auth(client: TestClient) -> None:
+    resp = client.post("/api/player/say", json={"seat_token": "x", "phrase_id": 1})
+    assert resp.status_code == 401
+
+
+def test_player_say_invalid_token(client: TestClient) -> None:
+    resp = client.post(
+        "/api/player/say",
+        headers=SPECTATOR_HEADER,
+        json={"seat_token": "bogus", "phrase_id": 1},
+    )
+    assert resp.status_code == 404
+
+
+def test_player_say_invalid_phrase(client: TestClient) -> None:
+    created = client.post(
+        "/api/games", headers=SPECTATOR_HEADER, json={"seat_count": 2}
+    ).json()
+    joined = client.post(
+        f"/api/player/join/{created['game_id']}", headers=SPECTATOR_HEADER
+    ).json()
+    resp = client.post(
+        "/api/player/say",
+        headers=SPECTATOR_HEADER,
+        json={"seat_token": joined["seat_token"], "phrase_id": 99},
+    )
+    assert resp.status_code == 422
+
+
+def test_player_say_returns_phrase(client: TestClient) -> None:
+    created = client.post(
+        "/api/games", headers=SPECTATOR_HEADER, json={"seat_count": 2}
+    ).json()
+    joined = client.post(
+        f"/api/player/join/{created['game_id']}", headers=SPECTATOR_HEADER
+    ).json()
+    resp = client.post(
+        "/api/player/say",
+        headers=SPECTATOR_HEADER,
+        json={"seat_token": joined["seat_token"], "phrase_id": 3},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["phrase"] == "I see you."
+
+
+def test_player_act_requires_auth(client: TestClient) -> None:
+    resp = client.post(
+        "/api/player/act",
+        json={"seat_token": "x", "action": "fold", "bluff_declared": False},
+    )
+    assert resp.status_code == 401
+
+
+def test_player_act_invalid_token(client: TestClient) -> None:
+    resp = client.post(
+        "/api/player/act",
+        headers=SPECTATOR_HEADER,
+        json={"seat_token": "bogus", "action": "fold", "bluff_declared": False},
+    )
+    assert resp.status_code == 404
+
+
+def test_player_act_fold(client: TestClient) -> None:
+    created = client.post(
+        "/api/games", headers=SPECTATOR_HEADER, json={"seat_count": 2}
+    ).json()
+    game_id = created["game_id"]
+    j1 = client.post(f"/api/player/join/{game_id}", headers=SPECTATOR_HEADER).json()
+    j2 = client.post(f"/api/player/join/{game_id}", headers=SPECTATOR_HEADER).json()
+    state = client.get(
+        f"/api/player/state?seat_token={j1['seat_token']}",
+        headers=SPECTATOR_HEADER,
+    ).json()
+    actor_tok = (
+        j1["seat_token"]
+        if state["current_actor"] == j1["seat_id"]
+        else j2["seat_token"]
+    )
+    resp = client.post(
+        "/api/player/act",
+        headers=SPECTATOR_HEADER,
+        json={"seat_token": actor_tok, "action": "fold", "bluff_declared": False},
+    )
+    assert resp.status_code == 200
+    assert "result" in resp.json()

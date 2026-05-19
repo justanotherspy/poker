@@ -4,7 +4,7 @@
 // the empty default is correct. For separate-origin dev (Next.js on :3000
 // calling FastAPI on :8000) set NEXT_PUBLIC_API_BASE=http://localhost:8000.
 
-import type { GameSummary, SpectatorView } from "./types";
+import type { GameSummary, PlayerView, SpectatorView } from "./types";
 
 export const API_BASE: string = process.env.NEXT_PUBLIC_API_BASE ?? "";
 
@@ -103,6 +103,67 @@ export async function fetchSpectatorState(
     throw new ApiError(r.status, `state fetch failed (${r.status})`);
   }
   return (await r.json()) as SpectatorView;
+}
+
+export async function joinSeat(
+  gameId: string,
+): Promise<{ seat_id: number; seat_token: string }> {
+  const r = await apiFetch(`/api/player/join/${encodeURIComponent(gameId)}`, {
+    method: "POST",
+  });
+  if (!r.ok) {
+    const body = (await r.json().catch(() => ({}))) as { detail?: string };
+    throw new ApiError(r.status, body.detail ?? `join failed (${r.status})`);
+  }
+  return (await r.json()) as { seat_id: number; seat_token: string };
+}
+
+export async function getPlayerState(seatToken: string): Promise<PlayerView> {
+  const r = await apiFetch(
+    `/api/player/state?seat_token=${encodeURIComponent(seatToken)}`,
+  );
+  if (!r.ok) {
+    throw new ApiError(r.status, `player state failed (${r.status})`);
+  }
+  return (await r.json()) as PlayerView;
+}
+
+export async function playerAct(opts: {
+  seatToken: string;
+  action: "fold" | "check" | "call" | "raise" | "bet";
+  bluffDeclared: boolean;
+  amount?: number;
+  tableChat?: number;
+}): Promise<{ result: string; chat?: string }> {
+  const r = await apiFetch("/api/player/act", {
+    method: "POST",
+    body: JSON.stringify({
+      seat_token: opts.seatToken,
+      action: opts.action,
+      bluff_declared: opts.bluffDeclared,
+      amount: opts.amount ?? null,
+      table_chat: opts.tableChat ?? null,
+    }),
+  });
+  if (!r.ok) {
+    const body = (await r.json().catch(() => ({}))) as { detail?: string };
+    throw new ApiError(r.status, body.detail ?? `act failed (${r.status})`);
+  }
+  return (await r.json()) as { result: string; chat?: string };
+}
+
+export async function playerSay(
+  seatToken: string,
+  phraseId: number,
+): Promise<{ phrase: string }> {
+  const r = await apiFetch("/api/player/say", {
+    method: "POST",
+    body: JSON.stringify({ seat_token: seatToken, phrase_id: phraseId }),
+  });
+  if (!r.ok) {
+    throw new ApiError(r.status, `say failed (${r.status})`);
+  }
+  return (await r.json()) as { phrase: string };
 }
 
 export class ApiError extends Error {
