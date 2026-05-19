@@ -1,8 +1,9 @@
 // Topbar — brand, table context, hand number, connection indicator,
-// theme toggle. No phase or view toggle (spectator-only round-1 scope).
+// theme toggle, plus games-menu and logout controls.
 
 "use client";
 
+import type { ConnectionState } from "@/lib/useSpectatorState";
 import type { SpectatorView } from "@/lib/types";
 
 export function Topbar({
@@ -10,11 +11,15 @@ export function Topbar({
   theme,
   onToggleTheme,
   connectionState,
+  onOpenGames,
+  onLogout,
 }: {
   view: SpectatorView | null;
   theme: "light" | "dark";
   onToggleTheme: () => void;
-  connectionState: "connecting" | "live" | "reconnecting";
+  connectionState: ConnectionState;
+  onOpenGames: () => void;
+  onLogout: () => void;
 }) {
   const tableLabel = view
     ? `table #${view.table_id.slice(0, 8)} · ${view.seats.length}-max NLH`
@@ -51,10 +56,14 @@ export function Topbar({
         </span>
       </div>
       <div className="topbar-right">
-        {view && (
-          <span className="meta">hand #{view.hand_number}</span>
-        )}
+        {view && <span className="meta">hand #{view.hand_number}</span>}
         <span className={connCls}>{connectionState}</span>
+        <button className="topbar-button" onClick={onOpenGames}>
+          games
+        </button>
+        <button className="topbar-button" onClick={onLogout} title="log out">
+          logout
+        </button>
         <button
           className="theme-toggle"
           onClick={onToggleTheme}

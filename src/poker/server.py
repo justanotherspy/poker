@@ -3,7 +3,13 @@ import pathlib
 from dataclasses import asdict
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    Depends,
+    FastAPI,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.staticfiles import StaticFiles
 from fastmcp import FastMCP
 from pydantic import BaseModel
@@ -11,15 +17,18 @@ from starlette.types import Receive, Scope, Send
 
 from poker import game as _game
 from poker import store
-from poker.auth import HashedApiKeyVerifier
-from poker.game import SpectatorView
+from poker.auth import (
+    HashedApiKeyVerifier,
+    require_spectator_password,
+    verify_spectator_password,
+)
 
 mcp = FastMCP("poker-server", auth=HashedApiKeyVerifier())
 _mcp_asgi = mcp.http_app()
 
 
 # ---------------------------------------------------------------------------
-# BroadcastHub — fan-out spectator-view snapshots to WS subscribers.
+# Per-game BroadcastHub — fan-out spectator-view snapshots to WS subscribers.
 # ---------------------------------------------------------------------------
 
 
@@ -49,45 +58,92 @@ class BroadcastHub:
             for q in dead:
                 self._subs.discard(q)
 
+    async def close(self) -> None:
+        """Notify subscribers the game is gone and clear the subscriber set."""
+        async with self._lock:
+            for q in self._subs:
+                try:
+                    q.put_nowait({"type": "deleted"})
+                except asyncio.QueueFull:
+                    pass
+            self._subs.clear()
 
-_hub = BroadcastHub()
+
+_hubs: dict[str, BroadcastHub] = {}
+_hubs_lock = asyncio.Lock()
+_auto_deal_tasks: dict[str, asyncio.Task[None]] = {}
+
+# Delay between hands so spectators see the showdown / winner highlight
+# before the next deal flushes the table.
+INTER_HAND_DELAY = 5.0
 
 
-def _view_to_dict(v: SpectatorView) -> dict[str, Any]:
+async def _get_hub(game_id: str) -> BroadcastHub:
+    async with _hubs_lock:
+        hub = _hubs.get(game_id)
+        if hub is None:
+            hub = BroadcastHub()
+            _hubs[game_id] = hub
+        return hub
+
+
+def _view_to_dict(v: _game.SpectatorView) -> dict[str, Any]:
     return asdict(v)
 
 
-async def _broadcast_snapshot() -> None:
-    g = _game.get_game()
+async def _broadcast(game_id: str) -> None:
+    g = _game.get_game(game_id)
     if g is None:
         return
-    msg = {"type": "update", "view": _view_to_dict(g.get_spectator_view())}
-    await _hub.publish(msg)
+    hub = await _get_hub(game_id)
+    await hub.publish({"type": "update", "view": _view_to_dict(g.get_spectator_view())})
+
+
+def _drain_showdown(g: _game.GameState) -> None:
+    while g.needs_showdown():
+        g.advance_showdown()
+
+
+def _schedule_auto_deal(game_id: str) -> None:
+    existing = _auto_deal_tasks.get(game_id)
+    if existing is not None and not existing.done():
+        return
+    _auto_deal_tasks[game_id] = asyncio.create_task(_auto_deal(game_id))
+
+
+async def _auto_deal(game_id: str) -> None:
+    try:
+        await asyncio.sleep(INTER_HAND_DELAY)
+        with store.lock(game_id):
+            d = store.get_game(game_id)
+            if d is None:
+                return
+            g = _game.GameState.from_dict(d)
+            if g.game_ended or not g.is_hand_over():
+                return
+            g.start_next_hand()
+            store.save_game(g.to_dict())
+        if store.get_game(game_id) is not None:
+            await _broadcast(game_id)
+    except asyncio.CancelledError:
+        raise
+    finally:
+        _auto_deal_tasks.pop(game_id, None)
+
+
+async def _after_state_change(game_id: str, g: _game.GameState) -> None:
+    """Broadcast + schedule the next hand if appropriate."""
+    await _broadcast(game_id)
+    if g.is_hand_over() and not g.game_ended:
+        _schedule_auto_deal(game_id)
 
 
 _api = FastAPI()
 
 
 # ---------------------------------------------------------------------------
-# REST API — game control surface for the UI
+# REST API — spectator + game management (all gated by spectator password).
 # ---------------------------------------------------------------------------
-
-
-class CreateGameRequest(BaseModel):
-    seat_count: int = 2
-    starting_stack: int = 1000
-
-
-class ActRequest(BaseModel):
-    seat_id: int
-    action: Literal["fold", "check", "call", "raise", "bet"]
-    amount: int | None = None
-    bluff_declared: bool = False
-
-
-class SayRequest(BaseModel):
-    seat_id: int
-    phrase_id: int
 
 
 @_api.get("/api/health")
@@ -95,107 +151,83 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@_api.post("/api/game")
-async def api_create_game(req: CreateGameRequest) -> dict[str, Any]:
-    with store.lock():
-        g = _game.create_game(req.seat_count, req.starting_stack)
-    view = g.get_view(1)
-    await _broadcast_snapshot()
-    return {
-        "seat_count": g.seat_count,
-        "starting_stack": req.starting_stack,
-        "current_actor": view.current_actor,
-        "phase": view.phase,
-    }
+class VerifyPasswordRequest(BaseModel):
+    password_hash: str
 
 
-@_api.get("/api/game/state/{seat_id}")
-async def api_get_state(seat_id: int) -> dict[str, Any]:
-    g = _game.get_game()
+@_api.post("/api/auth/verify")
+async def auth_verify(req: VerifyPasswordRequest) -> dict[str, bool]:
+    if not verify_spectator_password(req.password_hash):
+        raise HTTPException(status_code=401, detail="invalid password")
+    return {"ok": True}
+
+
+class CreateGameRequest(BaseModel):
+    seat_count: int = 2
+    starting_stack: int = 1000
+
+
+@_api.get(
+    "/api/games",
+    dependencies=[Depends(require_spectator_password)],
+)
+async def games_list() -> dict[str, Any]:
+    return {"games": [asdict(s) for s in _game.list_games()]}
+
+
+@_api.post(
+    "/api/games",
+    dependencies=[Depends(require_spectator_password)],
+)
+async def games_create(req: CreateGameRequest) -> dict[str, Any]:
+    if req.seat_count < 2 or req.seat_count > 6:
+        raise HTTPException(status_code=422, detail="seat_count must be 2–6")
+    if req.starting_stack < 200:
+        raise HTTPException(status_code=422, detail="starting_stack must be ≥ 200")
+    g = _game.create_game(req.seat_count, req.starting_stack)
+    summary = asdict(g.summary())
+    await _broadcast(g.game_id)
+    return summary
+
+
+@_api.delete(
+    "/api/games/{game_id}",
+    dependencies=[Depends(require_spectator_password)],
+)
+async def games_delete(game_id: str) -> dict[str, bool]:
+    with store.lock(game_id):
+        deleted = store.delete_game(game_id)
+    # Tear down hub + cancel any pending auto-deal.
+    hub = _hubs.pop(game_id, None)
+    if hub is not None:
+        await hub.close()
+    task = _auto_deal_tasks.pop(game_id, None)
+    if task is not None:
+        task.cancel()
+    return {"deleted": deleted}
+
+
+@_api.get(
+    "/api/spectate/state/{game_id}",
+    dependencies=[Depends(require_spectator_password)],
+)
+async def spectate_state(game_id: str) -> dict[str, Any]:
+    g = _game.get_game(game_id)
     if g is None:
-        raise HTTPException(status_code=404, detail="No active game.")
-    v = g.get_view(seat_id)
-    return {
-        "seat_id": v.seat_id,
-        "hole_cards": v.hole_cards,
-        "board": v.board,
-        "pot": v.pot,
-        "stacks": v.stacks,
-        "current_actor": v.current_actor,
-        "to_call": v.to_call,
-        "min_raise": v.min_raise,
-        "phase": v.phase,
-    }
-
-
-@_api.post("/api/game/act")
-async def api_act(req: ActRequest) -> dict[str, Any]:
-    with store.lock():
-        g = _game.get_game()
-        if g is None:
-            raise HTTPException(status_code=404, detail="No active game.")
-        g.bluffs[req.seat_id] = req.bluff_declared
-        try:
-            result = g.apply_action(req.seat_id, req.action, req.amount)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        store.save(g.to_dict())
-    await _broadcast_snapshot()
-    return {"result": result}
-
-
-@_api.post("/api/game/say")
-async def api_say(req: SayRequest) -> dict[str, str]:
-    phrase = _game.PHRASES.get(req.phrase_id)
-    if phrase is None:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Unknown phrase_id {req.phrase_id}. Valid range: 1–10.",
-        )
-    with store.lock():
-        g = _game.get_game()
-        if g is None:
-            raise HTTPException(status_code=404, detail="No active game.")
-        g.record_chat(req.seat_id, phrase)
-        store.save(g.to_dict())
-    await _broadcast_snapshot()
-    return {"phrase": phrase}
-
-
-@_api.post("/api/game/showdown")
-async def api_showdown() -> dict[str, Any]:
-    with store.lock():
-        g = _game.get_game()
-        if g is None:
-            raise HTTPException(status_code=404, detail="No active game.")
-        if not g.needs_showdown():
-            raise HTTPException(status_code=422, detail="No showdown in progress.")
-        g.advance_showdown()
-        store.save(g.to_dict())
-    await _broadcast_snapshot()
-    view = g.get_view(1)
-    return {"phase": view.phase, "needs_showdown": g.needs_showdown()}
-
-
-# ---------------------------------------------------------------------------
-# Spectator API — public, read-only. Full table snapshot + WS push.
-# ---------------------------------------------------------------------------
-
-
-@_api.get("/api/spectate/state")
-async def api_spectate_state() -> dict[str, Any]:
-    g = _game.get_game()
-    if g is None:
-        raise HTTPException(status_code=404, detail="No active game.")
+        raise HTTPException(status_code=404, detail="game not found")
     return _view_to_dict(g.get_spectator_view())
 
 
-@_api.websocket("/api/spectate/ws")
-async def ws_spectate(ws: WebSocket) -> None:
+@_api.websocket("/api/spectate/ws/{game_id}")
+async def ws_spectate(ws: WebSocket, game_id: str) -> None:
+    if not verify_spectator_password(ws.query_params.get("password", "")):
+        await ws.close(code=4401)
+        return
     await ws.accept()
-    q = await _hub.subscribe()
+    hub = await _get_hub(game_id)
+    q = await hub.subscribe()
     try:
-        g = _game.get_game()
+        g = _game.get_game(game_id)
         if g is not None:
             await ws.send_json(
                 {"type": "snapshot", "view": _view_to_dict(g.get_spectator_view())}
@@ -203,10 +235,12 @@ async def ws_spectate(ws: WebSocket) -> None:
         while True:
             msg = await q.get()
             await ws.send_json(msg)
+            if msg.get("type") == "deleted":
+                break
     except WebSocketDisconnect:
         pass
     finally:
-        await _hub.unsubscribe(q)
+        await hub.unsubscribe(q)
 
 
 # ---------------------------------------------------------------------------
@@ -214,31 +248,21 @@ async def ws_spectate(ws: WebSocket) -> None:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool
-async def create_game(
-    seat_count: int = 2, starting_stack: int = 1000
-) -> dict[str, Any]:
-    """Start a new heads-up poker game. Deals hole cards to all seats."""
-    with store.lock():
-        g = _game.create_game(seat_count, starting_stack)
-    view = g.get_view(1)
-    await _broadcast_snapshot()
-    return {
-        "seat_count": g.seat_count,
-        "starting_stack": starting_stack,
-        "current_actor": view.current_actor,
-        "phase": view.phase,
-    }
+def _resolve_token(seat_token: str) -> tuple[str, int] | None:
+    """Find (game_id, seat_id) for a given seat token by scanning games."""
+    import secrets as _secrets
+
+    for game_dict in store.list_games():
+        seat_tokens = game_dict.get("seat_tokens", {}) or {}
+        for sid_str, tok in seat_tokens.items():
+            if _secrets.compare_digest(str(tok), seat_token):
+                return str(game_dict["game_id"]), int(sid_str)
+    return None
 
 
-@mcp.tool
-def get_table_state(seat_id: int) -> dict[str, Any]:
-    """Get the table state for a seat. Returns own hole cards and all public info."""
-    g = _game.get_game()
-    if g is None:
-        return {"error": "No active game. Call create_game first."}
-    v = g.get_view(seat_id)
+def _table_view_dict(v: _game.TableView, game_id: str) -> dict[str, Any]:
     return {
+        "game_id": game_id,
         "seat_id": v.seat_id,
         "hole_cards": v.hole_cards,
         "board": v.board,
@@ -248,63 +272,115 @@ def get_table_state(seat_id: int) -> dict[str, Any]:
         "to_call": v.to_call,
         "min_raise": v.min_raise,
         "phase": v.phase,
+        "hand_number": v.hand_number,
+        "game_ended": v.game_ended,
     }
 
 
 @mcp.tool
+async def list_games() -> dict[str, Any]:
+    """List every active game so an agent can pick one to join."""
+    return {"games": [asdict(s) for s in _game.list_games()]}
+
+
+@mcp.tool
+async def join_game(game_id: str) -> dict[str, Any]:
+    """Claim an open seat at a game. Returns a seat_token used for every
+    subsequent act/say/get_table_state call. One seat per agent: a second
+    join_game call gets a different seat (or an error if full)."""
+    with store.lock(game_id):
+        d = store.get_game(game_id)
+        if d is None:
+            return {"error": "Game not found."}
+        g = _game.GameState.from_dict(d)
+        claim = g.claim_seat()
+        if claim is None:
+            return {"error": "No seats available."}
+        seat_id, seat_token = claim
+        store.save_game(g.to_dict())
+    await _broadcast(game_id)
+    return {"game_id": game_id, "seat_id": seat_id, "seat_token": seat_token}
+
+
+@mcp.tool
+def get_table_state(seat_token: str) -> dict[str, Any]:
+    """Get the table state for the seat owning `seat_token`. Returns own
+    hole cards and all public info."""
+    resolved = _resolve_token(seat_token)
+    if resolved is None:
+        return {"error": "Invalid seat token."}
+    game_id, seat_id = resolved
+    g = _game.get_game(game_id)
+    if g is None:
+        return {"error": "Game not found."}
+    return _table_view_dict(g.get_view(seat_id), game_id)
+
+
+@mcp.tool
 async def act(
-    seat_id: int,
+    seat_token: str,
     action: Literal["fold", "check", "call", "raise", "bet"],
     bluff_declared: bool,
     amount: int | None = None,
     table_chat: int | None = None,
 ) -> dict[str, Any]:
-    """Make a poker action. seat_id is 1-indexed. bluff_declared is required.
+    """Make a poker action. The seat is identified by `seat_token` from
+    join_game. `bluff_declared` is required.
 
-    If table_chat (1–10) is supplied, the matching phrase is persisted to the
-    table chat log under this seat and broadcast to spectators.
+    If `table_chat` (1–10) is supplied, the matching phrase is persisted
+    to the table chat under this seat and broadcast to spectators.
     """
-    with store.lock():
-        g = _game.get_game()
-        if g is None:
-            return {"error": "No active game."}
+    resolved = _resolve_token(seat_token)
+    if resolved is None:
+        return {"error": "Invalid seat token."}
+    game_id, seat_id = resolved
+    chat_phrase: str | None = None
+    with store.lock(game_id):
+        d = store.get_game(game_id)
+        if d is None:
+            return {"error": "Game not found."}
+        g = _game.GameState.from_dict(d)
         g.bluffs[seat_id] = bluff_declared
         try:
             result = g.apply_action(seat_id, action, amount)
         except ValueError as exc:
             return {"error": str(exc)}
-        chat_phrase: str | None = None
+        _drain_showdown(g)
         if table_chat is not None:
             phrase = _game.PHRASES.get(table_chat)
             if phrase:
                 g.record_chat(seat_id, phrase)
                 chat_phrase = phrase
-        store.save(g.to_dict())
-    await _broadcast_snapshot()
-    response: dict[str, Any] = {"result": result}
+        store.save_game(g.to_dict())
+    g_after = _game.get_game(game_id)
+    if g_after is not None:
+        await _after_state_change(game_id, g_after)
+    response: dict[str, Any] = {"result": result, "game_id": game_id}
     if chat_phrase is not None:
         response["chat"] = chat_phrase
     return response
 
 
 @mcp.tool
-async def say(seat_id: int, phrase_id: int) -> dict[str, Any]:
-    """Emit a fixed table chat phrase from a seat. seat_id is 1-indexed.
-
-    Persists the phrase to the table chat log and broadcasts to spectators.
-    phrase_id must be 1–10.
-    """
+async def say(seat_token: str, phrase_id: int) -> dict[str, Any]:
+    """Emit a fixed table chat phrase from the seat owning `seat_token`.
+    phrase_id must be 1–10."""
     phrase = _game.PHRASES.get(phrase_id)
     if phrase is None:
         return {"error": f"Unknown phrase_id {phrase_id}. Valid range: 1–10."}
-    with store.lock():
-        g = _game.get_game()
-        if g is None:
-            return {"error": "No active game."}
+    resolved = _resolve_token(seat_token)
+    if resolved is None:
+        return {"error": "Invalid seat token."}
+    game_id, seat_id = resolved
+    with store.lock(game_id):
+        d = store.get_game(game_id)
+        if d is None:
+            return {"error": "Game not found."}
+        g = _game.GameState.from_dict(d)
         g.record_chat(seat_id, phrase)
-        store.save(g.to_dict())
-    await _broadcast_snapshot()
-    return {"phrase": phrase}
+        store.save_game(g.to_dict())
+    await _broadcast(game_id)
+    return {"phrase": phrase, "game_id": game_id}
 
 
 # ---------------------------------------------------------------------------

@@ -1,22 +1,31 @@
-// useSpectatorState — WebSocket-driven spectator view subscription.
+// useSpectatorState — game-scoped WebSocket-driven spectator view.
 //
-// Connects to /api/spectate/ws, sets `view` from snapshot/update
-// messages, reconnects on close with exponential backoff (1s → 10s),
-// and falls back to polling /api/spectate/state every 2s while
-// disconnected.
+// Pass the game_id to subscribe to. Pass null to disconnect. The hook
+// opens /api/spectate/ws/{gameId}?password=<hash>, sets `view` from
+// snapshot/update messages, reconnects with exponential backoff (1s →
+// 10s) on close, and falls back to polling /api/spectate/state/{gameId}
+// every 2s while disconnected. When the server publishes a `deleted`
+// message (the game was removed), `view` clears and `gameMissing` flips
+// to true so the parent can switch back to the game picker.
 
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { API_BASE, wsBase } from "./api";
-import type { SnapshotMessage, SpectatorView } from "./types";
+import {
+  API_BASE,
+  fetchSpectatorState,
+  getAuthHash,
+  wsBase,
+} from "./api";
+import type { ServerMessage, SpectatorView } from "./types";
 
-export type ConnectionState = "connecting" | "live" | "reconnecting";
+export type ConnectionState = "connecting" | "live" | "reconnecting" | "idle";
 
-export function useSpectatorState() {
+export function useSpectatorState(gameId: string | null) {
   const [view, setView] = useState<SpectatorView | null>(null);
   const [connectionState, setConnectionState] =
-    useState<ConnectionState>("connecting");
+    useState<ConnectionState>("idle");
+  const [gameMissing, setGameMissing] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -26,14 +35,24 @@ export function useSpectatorState() {
 
   useEffect(() => {
     cancelledRef.current = false;
+    setView(null);
+    setGameMissing(false);
+
+    if (gameId === null) {
+      setConnectionState("idle");
+      return;
+    }
+
+    setConnectionState("connecting");
 
     const restFallback = async () => {
       try {
-        const r = await fetch(`${API_BASE}/api/spectate/state`);
-        if (r.ok) {
-          const data: SpectatorView = await r.json();
-          setView(data);
+        const data = await fetchSpectatorState(gameId);
+        if (data === null) {
+          setGameMissing(true);
+          return;
         }
+        setView(data);
       } catch {
         // ignore; ws may come back
       }
@@ -53,9 +72,11 @@ export function useSpectatorState() {
     const connect = () => {
       if (cancelledRef.current) return;
       setConnectionState((prev) => (prev === "live" ? "reconnecting" : prev));
+      const hash = getAuthHash() ?? "";
+      const url = `${wsBase()}/api/spectate/ws/${encodeURIComponent(gameId)}?password=${encodeURIComponent(hash)}`;
       let ws: WebSocket;
       try {
-        ws = new WebSocket(`${wsBase()}/api/spectate/ws`);
+        ws = new WebSocket(url);
       } catch {
         scheduleReconnect();
         return;
@@ -69,9 +90,14 @@ export function useSpectatorState() {
       };
       ws.onmessage = (evt) => {
         try {
-          const msg: SnapshotMessage = JSON.parse(evt.data);
+          const msg: ServerMessage = JSON.parse(evt.data);
           if (msg.type === "snapshot" || msg.type === "update") {
             setView(msg.view);
+          } else if (msg.type === "deleted") {
+            setView(null);
+            setGameMissing(true);
+            cancelledRef.current = true;
+            ws.close();
           }
         } catch {
           // ignore malformed
@@ -109,7 +135,13 @@ export function useSpectatorState() {
         wsRef.current.close();
       }
     };
-  }, []);
+    // API_BASE is referenced indirectly through wsBase() / fetchSpectatorState;
+    // it's stable for a single page load, so we don't need to depend on it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameId]);
 
-  return { view, connectionState };
+  return { view, connectionState, gameMissing };
 }
+
+// Re-export so consumers can rely on the same module for both helpers.
+export { API_BASE };

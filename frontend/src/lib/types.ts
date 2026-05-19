@@ -5,6 +5,7 @@ export type Blind = "SB" | "BB";
 export type Street = "pre" | "flop" | "turn" | "river";
 export type Phase = "preflop" | "flop" | "turn" | "river" | "ended";
 export type SeatKind = "human" | "agent";
+export type SeatStatus = "open" | "claimed";
 
 export interface SpectatorSeat {
   seat_id: number;
@@ -23,6 +24,7 @@ export interface SpectatorSeat {
   hand_rank: string | null;
   shows_cards: boolean;
   won_amount: number | null;
+  status: SeatStatus;
 }
 
 export interface ChatMessage {
@@ -36,6 +38,7 @@ export interface HistoryEntry {
   street: Street;
   text: string;
   marker: boolean;
+  hand_number: number;
 }
 
 export interface SpectatorView {
@@ -51,10 +54,27 @@ export interface SpectatorView {
   chat: ChatMessage[];
   stats: Record<string, Record<string, number>> | null;
   winner_names: string[] | null;
+  game_ended: boolean;
+  seats_open: number[];
 }
 
-// WebSocket message envelope: `snapshot` on connect, `update` on every mutation.
+// WebSocket message envelope: `snapshot` on connect, `update` on every mutation,
+// `deleted` when the game has been removed.
 export interface SnapshotMessage {
   type: "snapshot" | "update";
   view: SpectatorView;
+}
+export interface DeletedMessage {
+  type: "deleted";
+}
+export type ServerMessage = SnapshotMessage | DeletedMessage;
+
+export interface GameSummary {
+  game_id: string;
+  seat_count: number;
+  seats_filled: number;
+  hand_number: number;
+  phase: Phase;
+  game_ended: boolean;
+  created_at: number;
 }
