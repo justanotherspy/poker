@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cmd=$(jq -r '.tool_input.command'); if echo \"$cmd\" | grep -qE '^git commit'; then cd /home/sprite/repos/poker && make lint && make format-check; fi",
+            "command": "cmd=$(jq -r '.tool_input.command'); if echo \"$cmd\" | grep -qE '^git commit'; then make lint && make format-check; fi",
             "timeout": 60,
             "statusMessage": "Running ruff + black..."
           }
