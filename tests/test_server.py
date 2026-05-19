@@ -5,7 +5,12 @@ import asyncio
 import pytest
 from starlette.testclient import TestClient
 
-from poker.server import _api, mcp
+from poker.game import create_game, get_game
+from poker.server import _api, _get_hub, mcp
+from poker.server import act as mcp_act
+from poker.server import get_table_state as mcp_get_state
+from poker.server import join_game as mcp_join_game
+from poker.server import say as mcp_say
 from tests.conftest import SPECTATOR_HEADER
 
 
@@ -169,3 +174,91 @@ def test_spectate_state_returns_view(client: TestClient) -> None:
     assert data["hand_number"] == 1
     assert data["game_ended"] is False
     assert set(data["seats_open"]) == {1, 2, 3}
+
+
+# ---------------------------------------------------------------------------
+# MCP say tool — in-process async tests
+# ---------------------------------------------------------------------------
+# These call the tool functions directly (asyncio_mode = "auto") so we can
+# exercise the full tool logic without standing up a real HTTP server.
+
+
+async def test_say_returns_correct_phrase() -> None:
+    g = create_game(seat_count=2, starting_stack=1000)
+    joined = await mcp_join_game(g.game_id)
+    result = await mcp_say(joined["seat_token"], 1)
+    assert result == {"phrase": "Nice hand.", "game_id": g.game_id}
+
+
+async def test_say_invalid_phrase_id_returns_error() -> None:
+    g = create_game(seat_count=2, starting_stack=1000)
+    joined = await mcp_join_game(g.game_id)
+    result = await mcp_say(joined["seat_token"], 99)
+    assert "error" in result
+
+
+async def test_say_invalid_token_returns_error() -> None:
+    result = await mcp_say("bogus-token", 1)
+    assert "error" in result
+
+
+async def test_say_persists_chat_to_store() -> None:
+    g = create_game(seat_count=2, starting_stack=1000)
+    joined = await mcp_join_game(g.game_id)
+    await mcp_say(joined["seat_token"], 3)
+    updated = get_game(g.game_id)
+    assert updated is not None
+    assert len(updated.chat_log) == 1
+    assert updated.chat_log[0]["text"] == "I see you."
+
+
+async def test_say_publishes_update_to_hub() -> None:
+    g = create_game(seat_count=2, starting_stack=1000)
+    joined = await mcp_join_game(g.game_id)
+    hub = await _get_hub(g.game_id)
+    q = await hub.subscribe()
+    await mcp_say(joined["seat_token"], 1)
+    msg = q.get_nowait()
+    assert msg["type"] == "update"
+    assert len(msg["view"]["chat"]) == 1
+    assert msg["view"]["chat"][0]["text"] == "Nice hand."
+
+
+# ---------------------------------------------------------------------------
+# MCP act tool — table_chat parameter
+# ---------------------------------------------------------------------------
+
+
+async def test_act_with_table_chat_records_phrase() -> None:
+    g = create_game(seat_count=2, starting_stack=1000)
+    j1 = await mcp_join_game(g.game_id)
+    j2 = await mcp_join_game(g.game_id)
+    state = mcp_get_state(j1["seat_token"])
+    actor_tok = (
+        j1["seat_token"]
+        if state["current_actor"] == j1["seat_id"]
+        else j2["seat_token"]
+    )
+    result = await mcp_act(actor_tok, "fold", False, table_chat=5)
+    assert result.get("chat") == "Let's go."
+    updated = get_game(g.game_id)
+    assert updated is not None
+    assert len(updated.chat_log) == 1
+    assert updated.chat_log[0]["text"] == "Let's go."
+
+
+async def test_act_with_invalid_table_chat_silently_ignored() -> None:
+    g = create_game(seat_count=2, starting_stack=1000)
+    j1 = await mcp_join_game(g.game_id)
+    j2 = await mcp_join_game(g.game_id)
+    state = mcp_get_state(j1["seat_token"])
+    actor_tok = (
+        j1["seat_token"]
+        if state["current_actor"] == j1["seat_id"]
+        else j2["seat_token"]
+    )
+    result = await mcp_act(actor_tok, "fold", False, table_chat=99)
+    assert "chat" not in result
+    updated = get_game(g.game_id)
+    assert updated is not None
+    assert updated.chat_log == []

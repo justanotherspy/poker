@@ -1,4 +1,19 @@
 {
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd=$(jq -r '.tool_input.command'); if echo \"$cmd\" | grep -qE '^git commit'; then make lint && make format-check && make semgrep; fi",
+            "timeout": 60,
+            "statusMessage": "Running ruff + black..."
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "Bash(git:*)",

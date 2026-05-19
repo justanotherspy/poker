@@ -1,3 +1,5 @@
+import asyncio
+import json
 import os
 import threading
 import time
@@ -9,6 +11,7 @@ import pytest
 import uvicorn
 from fastmcp import Client
 from fastmcp.client.auth import BearerAuth
+from websockets.asyncio.client import connect as ws_connect
 
 _DEV_TOKEN = "e2e-test-token"
 # Use the same dev password as the rest of the unit-test suite — the
@@ -29,7 +32,9 @@ def server_url() -> Generator[str, None, None]:
 
     from poker.server import app
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=_PORT, log_level="error")
+    config = uvicorn.Config(
+        app, host="127.0.0.1", port=_PORT, log_level="error", ws="websockets-sansio"
+    )
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -213,3 +218,128 @@ def test_spectate_state_with_password(server_url: str) -> None:
     assert len(data["seats"]) == 2
     for seat in data["seats"]:
         assert len(seat["hole_cards"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# MCP say tool
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+async def test_mcp_say_returns_phrase(server_url: str) -> None:
+    gid = _create_game(seat_count=2)
+    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
+        joined = await client.call_tool("join_game", {"game_id": gid})
+        assert joined.structured_content is not None
+        tok = joined.structured_content["seat_token"]
+        result = await client.call_tool("say", {"seat_token": tok, "phrase_id": 1})
+        assert result.structured_content is not None
+        assert result.structured_content["phrase"] == "Nice hand."
+        assert result.structured_content["game_id"] == gid
+
+
+@pytest.mark.e2e
+async def test_mcp_say_invalid_phrase_id(server_url: str) -> None:
+    gid = _create_game(seat_count=2)
+    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
+        joined = await client.call_tool("join_game", {"game_id": gid})
+        assert joined.structured_content is not None
+        tok = joined.structured_content["seat_token"]
+        result = await client.call_tool("say", {"seat_token": tok, "phrase_id": 99})
+        assert result.structured_content is not None
+        assert "error" in result.structured_content
+
+
+@pytest.mark.e2e
+async def test_mcp_say_invalid_token(server_url: str) -> None:
+    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
+        result = await client.call_tool("say", {"seat_token": "bogus", "phrase_id": 1})
+        assert result.structured_content is not None
+        assert "error" in result.structured_content
+
+
+# ---------------------------------------------------------------------------
+# WebSocket — update broadcast after MCP action
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+async def test_ws_receives_update_after_mcp_join(server_url: str) -> None:
+    gid = _create_game(seat_count=2)
+    ws_url = f"ws://127.0.0.1:{_PORT}/api/spectate/ws/{gid}?password={_SPEC_PW}"
+    async with ws_connect(ws_url) as ws:
+        snap = json.loads(await ws.recv())
+        assert snap["type"] == "snapshot"
+        # join_game broadcasts an update to all subscribers of this game.
+        async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
+            await client.call_tool("join_game", {"game_id": gid})
+        update = json.loads(await ws.recv())
+    assert update["type"] == "update"
+
+
+@pytest.mark.e2e
+async def test_ws_receives_update_after_mcp_say(server_url: str) -> None:
+    gid = _create_game(seat_count=2)
+    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
+        joined = await client.call_tool("join_game", {"game_id": gid})
+        assert joined.structured_content is not None
+        tok = joined.structured_content["seat_token"]
+    ws_url = f"ws://127.0.0.1:{_PORT}/api/spectate/ws/{gid}?password={_SPEC_PW}"
+    async with ws_connect(ws_url) as ws:
+        snap = json.loads(await ws.recv())
+        assert snap["type"] == "snapshot"
+        async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
+            await client.call_tool("say", {"seat_token": tok, "phrase_id": 7})
+        update = json.loads(await ws.recv())
+    assert update["type"] == "update"
+    assert any(c["text"] == "Really?" for c in update["view"]["chat"])
+
+
+# ---------------------------------------------------------------------------
+# Concurrency — simultaneous joins and acts
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+async def test_concurrent_join_fills_exactly_two_seats(server_url: str) -> None:
+    gid = _create_game(seat_count=2)
+
+    async def join_once() -> dict[str, Any]:
+        async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as c:
+            r = await c.call_tool("join_game", {"game_id": gid})
+            assert r.structured_content is not None
+            return r.structured_content
+
+    results = await asyncio.gather(join_once(), join_once(), join_once())
+    successes = [r for r in results if "seat_id" in r]
+    errors = [r for r in results if "error" in r]
+    assert len(successes) == 2
+    assert len(errors) == 1
+    assert {r["seat_id"] for r in successes} == {1, 2}
+
+
+@pytest.mark.e2e
+async def test_concurrent_act_only_actor_succeeds(server_url: str) -> None:
+    gid = _create_game(seat_count=2)
+    async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
+        j1 = await client.call_tool("join_game", {"game_id": gid})
+        j2 = await client.call_tool("join_game", {"game_id": gid})
+    assert j1.structured_content is not None
+    assert j2.structured_content is not None
+    tok1 = j1.structured_content["seat_token"]
+    tok2 = j2.structured_content["seat_token"]
+
+    async def fold(token: str) -> dict[str, Any]:
+        async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as c:
+            r = await c.call_tool(
+                "act", {"seat_token": token, "action": "fold", "bluff_declared": False}
+            )
+            assert r.structured_content is not None
+            return r.structured_content
+
+    results = await asyncio.gather(fold(tok1), fold(tok2))
+    successes = [r for r in results if "error" not in r]
+    errors = [r for r in results if "error" in r]
+    assert len(successes) == 1
+    assert len(errors) == 1
+    assert "folds" in successes[0]["result"]
