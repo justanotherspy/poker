@@ -1,3 +1,8 @@
+# fly.toml app configuration file generated for claude-poker on 2026-05-19T19:33:51Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
 app = "claude-poker"
 primary_region = "iad"
 
