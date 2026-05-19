@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 import pytest
 import uvicorn
-import websockets
+from websockets.asyncio.client import connect as ws_connect
 from fastmcp import Client
 from fastmcp.client.auth import BearerAuth
 
@@ -32,7 +32,7 @@ def server_url() -> Generator[str, None, None]:
 
     from poker.server import app
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=_PORT, log_level="error")
+    config = uvicorn.Config(app, host="127.0.0.1", port=_PORT, log_level="error", ws="websockets-sansio")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -265,7 +265,7 @@ async def test_mcp_say_invalid_token(server_url: str) -> None:
 async def test_ws_receives_update_after_mcp_join(server_url: str) -> None:
     gid = _create_game(seat_count=2)
     ws_url = f"ws://127.0.0.1:{_PORT}/api/spectate/ws/{gid}?password={_SPEC_PW}"
-    async with websockets.connect(ws_url) as ws:
+    async with ws_connect(ws_url) as ws:
         snap = json.loads(await ws.recv())
         assert snap["type"] == "snapshot"
         # join_game broadcasts an update to all subscribers of this game.
@@ -283,7 +283,7 @@ async def test_ws_receives_update_after_mcp_say(server_url: str) -> None:
         assert joined.structured_content is not None
         tok = joined.structured_content["seat_token"]
     ws_url = f"ws://127.0.0.1:{_PORT}/api/spectate/ws/{gid}?password={_SPEC_PW}"
-    async with websockets.connect(ws_url) as ws:
+    async with ws_connect(ws_url) as ws:
         snap = json.loads(await ws.recv())
         assert snap["type"] == "snapshot"
         async with Client(server_url, auth=BearerAuth(_DEV_TOKEN)) as client:
