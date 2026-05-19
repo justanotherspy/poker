@@ -2,7 +2,7 @@
 // chip stacks. Ported from design/project/proto-table.jsx but trimmed to
 // the spectator/showdown subset.
 
-import type { SpectatorView } from "@/lib/types";
+import type { PlayerMode, SpectatorView } from "@/lib/types";
 import { SEAT_LAYOUT } from "@/lib/seatLayout";
 import { Card, CardSlot } from "./Card";
 import { ChipStack } from "./Chip";
@@ -105,9 +105,15 @@ function stageText(view: SpectatorView): string {
 export function Table({
   view,
   feltW = 720,
+  playerMode = "spectator",
+  heroSeatId,
+  onClaimSeat,
 }: {
   view: SpectatorView;
   feltW?: number;
+  playerMode?: PlayerMode;
+  heroSeatId?: number | null;
+  onClaimSeat?: (seatId: number) => void;
 }) {
   const feltH = Math.round(feltW * 0.47);
   const ringW = feltW + 360;
@@ -117,6 +123,15 @@ export function Table({
 
   const showdown = view.phase === "ended";
   const winnerName = view.winner_names?.[0] ?? null;
+
+  // In player mode: hide other players' hole cards unless showdown.
+  const cardVisibility = (seatId: number, folded: boolean, showsCards: boolean): boolean => {
+    if (playerMode === "spectator") return true;
+    if (seatId === heroSeatId) return true;
+    if (showdown && showsCards) return true;
+    if (folded) return false;
+    return false;
+  };
 
   return (
     <div
@@ -158,13 +173,24 @@ export function Table({
       {view.seats.map((p, i) => {
         const L = SEAT_LAYOUT[i];
         if (!L) return null;
+        const isHero = p.seat_id === heroSeatId;
+        const showCards = cardVisibility(p.seat_id, p.folded, p.shows_cards);
+        // Open seats are claimable when in player mode with no seat yet.
+        const canClaim =
+          playerMode === "player" && !heroSeatId && p.status === "open";
         return (
           <div
             key={`seat-${i}`}
             className={`table-seat table-seat--${L.align}`}
             style={{ left: cx + L.x, top: cy + L.y }}
           >
-            <Seat p={p} showdown={showdown} />
+            <Seat
+              p={p}
+              showdown={showdown}
+              isHero={isHero}
+              showCards={showCards}
+              onClaim={canClaim ? () => onClaimSeat?.(p.seat_id) : undefined}
+            />
             {!showdown && p.bet > 0 && (
               <span className="seat-bet-badge">
                 <span className="seat-bet-badge-sign">$</span>

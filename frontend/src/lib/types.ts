@@ -69,6 +69,23 @@ export interface DeletedMessage {
 }
 export type ServerMessage = SnapshotMessage | DeletedMessage;
 
+export type PlayerMode = "spectator" | "player";
+
+export interface PlayerView {
+  game_id: string;
+  seat_id: number;
+  hole_cards: string[];
+  board: string[];
+  pot: number;
+  stacks: Record<number, number>;
+  current_actor: number | null;
+  to_call: number;
+  min_raise: number | null;
+  phase: Phase;
+  hand_number: number;
+  game_ended: boolean;
+}
+
 export interface GameSummary {
   game_id: string;
   seat_count: number;

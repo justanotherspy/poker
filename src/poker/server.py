@@ -244,6 +244,120 @@ async def ws_spectate(ws: WebSocket, game_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# REST API — player actions (spectator-password gated)
+# ---------------------------------------------------------------------------
+
+
+class PlayerActRequest(BaseModel):
+    seat_token: str
+    action: Literal["fold", "check", "call", "raise", "bet"]
+    bluff_declared: bool
+    amount: int | None = None
+    table_chat: int | None = None
+
+
+class PlayerSayRequest(BaseModel):
+    seat_token: str
+    phrase_id: int
+
+
+@_api.post(
+    "/api/player/join/{game_id}",
+    dependencies=[Depends(require_spectator_password)],
+)
+async def player_join(game_id: str) -> dict[str, Any]:
+    with store.lock(game_id):
+        d = store.get_game(game_id)
+        if d is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        g = _game.GameState.from_dict(d)
+        claim = g.claim_seat()
+        if claim is None:
+            raise HTTPException(status_code=409, detail="no seats available")
+        seat_id, seat_token = claim
+        store.save_game(g.to_dict())
+    await _broadcast(game_id)
+    return {"game_id": game_id, "seat_id": seat_id, "seat_token": seat_token}
+
+
+@_api.get(
+    "/api/player/state",
+    dependencies=[Depends(require_spectator_password)],
+)
+async def player_state(seat_token: str) -> dict[str, Any]:
+    resolved = _resolve_token(seat_token)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="invalid seat token")
+    game_id, seat_id = resolved
+    g = _game.get_game(game_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="game not found")
+    return _table_view_dict(g.get_view(seat_id), game_id)
+
+
+@_api.post(
+    "/api/player/act",
+    dependencies=[Depends(require_spectator_password)],
+)
+async def player_act(req: PlayerActRequest) -> dict[str, Any]:
+    resolved = _resolve_token(req.seat_token)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="invalid seat token")
+    game_id, seat_id = resolved
+    chat_phrase: str | None = None
+    with store.lock(game_id):
+        d = store.get_game(game_id)
+        if d is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        g = _game.GameState.from_dict(d)
+        g.bluffs[seat_id] = req.bluff_declared
+        try:
+            result = g.apply_action(seat_id, req.action, req.amount)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        _drain_showdown(g)
+        if req.table_chat is not None:
+            phrase = _game.PHRASES.get(req.table_chat)
+            if phrase:
+                g.record_chat(seat_id, phrase)
+                chat_phrase = phrase
+        store.save_game(g.to_dict())
+    g_after = _game.get_game(game_id)
+    if g_after is not None:
+        await _after_state_change(game_id, g_after)
+    response: dict[str, Any] = {"result": result, "game_id": game_id}
+    if chat_phrase is not None:
+        response["chat"] = chat_phrase
+    return response
+
+
+@_api.post(
+    "/api/player/say",
+    dependencies=[Depends(require_spectator_password)],
+)
+async def player_say(req: PlayerSayRequest) -> dict[str, Any]:
+    phrase = _game.PHRASES.get(req.phrase_id)
+    if phrase is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown phrase_id {req.phrase_id}. Valid range: 1–10.",
+        )
+    resolved = _resolve_token(req.seat_token)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="invalid seat token")
+    game_id, seat_id = resolved
+    with store.lock(game_id):
+        d = store.get_game(game_id)
+        if d is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        g = _game.GameState.from_dict(d)
+        g.record_chat(seat_id, phrase)
+        store.save_game(g.to_dict())
+    await _broadcast(game_id)
+    return {"phrase": phrase, "game_id": game_id}
+
+
+# ---------------------------------------------------------------------------
 # MCP tools — agent-facing surface
 # ---------------------------------------------------------------------------
 

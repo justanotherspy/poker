@@ -9,25 +9,53 @@ import { SeatTokens } from "./DealerBlindTokens";
 export function Seat({
   p,
   showdown,
+  isHero = false,
+  showCards,
+  onClaim,
 }: {
   p: SpectatorSeat;
   showdown: boolean;
+  isHero?: boolean;
+  showCards?: boolean;
+  onClaim?: () => void;
 }) {
   const isWinner = showdown && (p.won_amount ?? 0) > 0;
   const isLoser = showdown && !p.folded && !isWinner && p.shows_cards;
+  const isOpenSelectable = !!onClaim && p.status === "open";
+
+  // showCards defaults to true (spectator sees all); player mode passes false for non-hero
+  const revealCards = showCards ?? true;
 
   const cls = [
     "seat",
     p.folded ? "is-folded" : "",
     p.to_act ? "is-to-act" : "",
+    isHero ? "is-hero" : "",
     isWinner ? "is-winner" : "",
     isLoser ? "is-loser" : "",
+    isOpenSelectable ? "is-open-selectable" : "",
   ]
     .filter(Boolean)
     .join(" ");
 
   return (
-    <div className={cls}>
+    <div
+      className={cls}
+      role={isOpenSelectable ? "button" : undefined}
+      tabIndex={isOpenSelectable ? 0 : undefined}
+      onClick={isOpenSelectable ? onClaim : undefined}
+      onKeyDown={
+        isOpenSelectable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClaim?.();
+              }
+            }
+          : undefined
+      }
+      aria-label={isOpenSelectable ? "Join this seat" : undefined}
+    >
       {p.to_act && !showdown && (
         <div className="seat-toact">
           <span className="seat-toact-pulse" />
@@ -59,9 +87,13 @@ export function Seat({
         </div>
       </div>
 
+      {isOpenSelectable && (
+        <div className="seat-join-label">join</div>
+      )}
+
       <div className="seat-hand">
         <span className="seat-holecards">
-          {p.folded
+          {p.folded || !revealCards
             ? p.hole_cards.map((_, i) => <Card key={i} facedown size="sm" />)
             : p.hole_cards.map((c, i) => <Card key={i} card={c} size="sm" />)}
         </span>

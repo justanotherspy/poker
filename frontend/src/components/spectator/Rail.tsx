@@ -15,14 +15,20 @@ interface Tab {
   render: () => ReactNode;
 }
 
-export function Rail({ view }: { view: SpectatorView }) {
+export function Rail({
+  view,
+  playerContext,
+}: {
+  view: SpectatorView;
+  playerContext?: { onSay: (phraseId: number) => Promise<void> };
+}) {
   const [active, setActive] = useState(0);
   const tabs: Tab[] = [
     {
       key: "chat",
       label: "Chat",
       badge: view.chat.length > 0 ? view.chat.length : null,
-      render: () => <ChatPanel chat={view.chat} />,
+      render: () => <ChatPanel chat={view.chat} playerContext={playerContext} />,
     },
     {
       key: "history",

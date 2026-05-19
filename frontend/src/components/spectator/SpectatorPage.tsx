@@ -1,16 +1,12 @@
-// Top-level orchestrator for the spectator route.
-//
-// Wraps the tree in <AuthProvider> so the login hash is available to the
-// API client and WS hook. Renders <LoginModal> when no hash is present.
-// Otherwise reads ?game=<id> from the URL, subscribes to that game via
-// useSpectatorState, and exposes a Games button (in the Topbar) that
-// opens <GameMenuModal> for create/delete/switch.
-
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { useSpectatorState } from "@/lib/useSpectatorState";
+import { usePlayerState } from "@/lib/usePlayerState";
+import type { PlayerMode } from "@/lib/types";
+import { ActionBar } from "./ActionBar";
+import { EndOfHandBar } from "./EndOfHandBar";
 import { GameMenuModal } from "./GameMenuModal";
 import { LoginModal } from "./LoginModal";
 import { Rail } from "./Rail";
@@ -80,8 +76,19 @@ function AuthedShell({
     return p.get("game");
   });
   const [menuOpen, setMenuOpen] = useState(false);
+  const [playerMode, setPlayerMode] = useState<PlayerMode>("spectator");
+
   const { view, connectionState, gameMissing } = useSpectatorState(gameId);
   const { logout } = useAuth();
+
+  const {
+    seatId: heroSeatId,
+    playerView,
+    claimSeat,
+    releaseSeat,
+    act,
+    say,
+  } = usePlayerState(gameId);
 
   const setGameId = useCallback((next: string | null) => {
     setGameIdState(next);
@@ -98,14 +105,61 @@ function AuthedShell({
     }
   }, []);
 
-  // If the watched game vanishes (deleted from another tab, or we just
-  // deleted it), drop selection and bounce back to the menu.
   useEffect(() => {
     if (gameMissing) {
       setGameId(null);
       setMenuOpen(true);
     }
   }, [gameMissing, setGameId]);
+
+  // When switching to spectator mode, release the seat.
+  const handleSetPlayerMode = (mode: PlayerMode) => {
+    setPlayerMode(mode);
+    if (mode === "spectator") {
+      releaseSeat();
+    }
+  };
+
+  const handleClaimSeat = async (_seatId: number) => {
+    if (!gameId) return;
+    await claimSeat(gameId);
+  };
+
+  const heroSeat = heroSeatId != null
+    ? view?.seats.find((s) => s.seat_id === heroSeatId) ?? null
+    : null;
+
+  const showActionBar =
+    playerMode === "player" && heroSeat != null && view != null && playerView != null;
+  const showEndBar =
+    playerMode === "player" && heroSeat != null && view?.phase === "ended";
+
+  const bottomBar = () => {
+    if (!view) return <EmptyStatus />;
+    if (playerMode === "spectator") return <StatusBar view={view} />;
+    if (showEndBar && heroSeat) {
+      return <EndOfHandBar view={view} heroSeat={heroSeat} />;
+    }
+    if (showActionBar && playerView && heroSeat) {
+      return (
+        <ActionBar
+          view={view}
+          playerView={playerView}
+          heroSeat={heroSeat}
+          onAct={act}
+          onSay={say}
+        />
+      );
+    }
+    // Player mode, no seat yet
+    return (
+      <div className="statusbar">
+        <div className="statusbar-item">
+          <span className="meta">click an open seat to join the game</span>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="spectator-shell">
@@ -116,19 +170,39 @@ function AuthedShell({
         connectionState={connectionState}
         onOpenGames={() => setMenuOpen(true)}
         onLogout={logout}
+        playerMode={playerMode}
+        onSetPlayerMode={handleSetPlayerMode}
+        heroSeat={heroSeat}
       />
       <main className="proto-main">
         <section className="proto-stage">
           <div className="stage-felt-wrap">
             {view ? (
-              <Table view={view} feltW={720} />
+              <Table
+                view={view}
+                feltW={720}
+                playerMode={playerMode}
+                heroSeatId={heroSeatId}
+                onClaimSeat={handleClaimSeat}
+              />
             ) : (
               <EmptyTable onOpenGames={() => setMenuOpen(true)} />
             )}
           </div>
-          {view ? <StatusBar view={view} /> : <EmptyStatus />}
+          {bottomBar()}
         </section>
-        {view ? <Rail view={view} /> : <EmptyRail />}
+        {view ? (
+          <Rail
+            view={view}
+            playerContext={
+              playerMode === "player" && heroSeat != null
+                ? { onSay: say }
+                : undefined
+            }
+          />
+        ) : (
+          <EmptyRail />
+        )}
       </main>
       <GameMenuModal
         open={menuOpen}
