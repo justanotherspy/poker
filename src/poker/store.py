@@ -106,7 +106,12 @@ def get_game(game_id: str) -> dict[str, Any] | None:
 def delete_game(game_id: str) -> bool:
     r = _client()
     if r is None:
-        return _memory["games"].pop(game_id, None) is not None
+        existed = _memory["games"].pop(game_id, None) is not None
+        # Drop the per-game lock so the dict doesn't grow without bound as
+        # games come and go in memory-only mode.
+        with _memory_lock_factory_lock:
+            _memory_locks.pop(game_id, None)
+        return existed
     deleted = r.delete(_STATE_KEY.format(game_id=game_id))
     return bool(deleted)
 

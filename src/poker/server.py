@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import pathlib
 from dataclasses import asdict
 from typing import Any, Literal
@@ -6,6 +7,7 @@ from typing import Any, Literal
 from fastapi import (
     Depends,
     FastAPI,
+    Header,
     HTTPException,
     WebSocket,
     WebSocketDisconnect,
@@ -72,6 +74,13 @@ class BroadcastHub:
 _hubs: dict[str, BroadcastHub] = {}
 _hubs_lock = asyncio.Lock()
 _auto_deal_tasks: dict[str, asyncio.Task[None]] = {}
+_log = logging.getLogger(__name__)
+
+# Upper bound on a player action `amount`. The largest stack we allow is well
+# below this (REST creation caps at sane values) but pokerkit operates on
+# Python ints, so a misbehaving client could send 10**18 and force a slow
+# path. Bound it at the boundary.
+_MAX_ACTION_AMOUNT = 10**9
 
 # Delay between hands so spectators see the showdown / winner highlight
 # before the next deal flushes the table.
@@ -127,6 +136,8 @@ async def _auto_deal(game_id: str) -> None:
             await _broadcast(game_id)
     except asyncio.CancelledError:
         raise
+    except Exception:
+        _log.exception("auto-deal failed for game %s", game_id)
     finally:
         _auto_deal_tasks.pop(game_id, None)
 
@@ -224,14 +235,19 @@ async def ws_spectate(ws: WebSocket, game_id: str) -> None:
         await ws.close(code=4401)
         return
     await ws.accept()
+    g = _game.get_game(game_id)
+    if g is None:
+        # Game doesn't exist; tell the client immediately rather than parking
+        # them on a hub that will never publish.
+        await ws.send_json({"type": "deleted"})
+        await ws.close()
+        return
     hub = await _get_hub(game_id)
     q = await hub.subscribe()
     try:
-        g = _game.get_game(game_id)
-        if g is not None:
-            await ws.send_json(
-                {"type": "snapshot", "view": _view_to_dict(g.get_spectator_view())}
-            )
+        await ws.send_json(
+            {"type": "snapshot", "view": _view_to_dict(g.get_spectator_view())}
+        )
         while True:
             msg = await q.get()
             await ws.send_json(msg)
@@ -254,6 +270,13 @@ class PlayerActRequest(BaseModel):
     bluff_declared: bool
     amount: int | None = None
     table_chat: int | None = None
+
+
+def _validate_amount(amount: int | None) -> None:
+    if amount is None:
+        return
+    if amount < 0 or amount > _MAX_ACTION_AMOUNT:
+        raise HTTPException(status_code=422, detail="amount out of range")
 
 
 class PlayerSayRequest(BaseModel):
@@ -284,8 +307,14 @@ async def player_join(game_id: str) -> dict[str, Any]:
     "/api/player/state",
     dependencies=[Depends(require_spectator_password)],
 )
-async def player_state(seat_token: str) -> dict[str, Any]:
-    resolved = _resolve_token(seat_token)
+async def player_state(
+    x_seat_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    # Seat tokens are credentials; the header keeps them out of access logs,
+    # browser history, and the Referer chain (CWE-598).
+    if not x_seat_token:
+        raise HTTPException(status_code=401, detail="missing seat token")
+    resolved = _resolve_token(x_seat_token)
     if resolved is None:
         raise HTTPException(status_code=404, detail="invalid seat token")
     game_id, seat_id = resolved
@@ -300,6 +329,7 @@ async def player_state(seat_token: str) -> dict[str, Any]:
     dependencies=[Depends(require_spectator_password)],
 )
 async def player_act(req: PlayerActRequest) -> dict[str, Any]:
+    _validate_amount(req.amount)
     resolved = _resolve_token(req.seat_token)
     if resolved is None:
         raise HTTPException(status_code=404, detail="invalid seat token")
@@ -444,6 +474,8 @@ async def act(
     If `table_chat` (1–10) is supplied, the matching phrase is persisted
     to the table chat under this seat and broadcast to spectators.
     """
+    if amount is not None and (amount < 0 or amount > _MAX_ACTION_AMOUNT):
+        return {"error": "amount out of range"}
     resolved = _resolve_token(seat_token)
     if resolved is None:
         return {"error": "Invalid seat token."}
