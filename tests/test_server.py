@@ -308,13 +308,22 @@ def test_player_join_no_seats_available(client: TestClient) -> None:
 
 
 def test_player_state_requires_auth(client: TestClient) -> None:
-    resp = client.get("/api/player/state?seat_token=x")
+    resp = client.get("/api/player/state", headers={"X-Seat-Token": "x"})
     assert resp.status_code == 401
 
 
 def test_player_state_invalid_token(client: TestClient) -> None:
-    resp = client.get("/api/player/state?seat_token=bogus", headers=SPECTATOR_HEADER)
+    resp = client.get(
+        "/api/player/state",
+        headers={**SPECTATOR_HEADER, "X-Seat-Token": "bogus"},
+    )
     assert resp.status_code == 404
+
+
+def test_player_state_missing_token(client: TestClient) -> None:
+    # Seat token is sent in a header (CWE-598). Missing header → 401.
+    resp = client.get("/api/player/state", headers=SPECTATOR_HEADER)
+    assert resp.status_code == 401
 
 
 def test_player_state_returns_table_view(client: TestClient) -> None:
@@ -324,8 +333,8 @@ def test_player_state_returns_table_view(client: TestClient) -> None:
     game_id = created["game_id"]
     joined = client.post(f"/api/player/join/{game_id}", headers=SPECTATOR_HEADER).json()
     resp = client.get(
-        f"/api/player/state?seat_token={joined['seat_token']}",
-        headers=SPECTATOR_HEADER,
+        "/api/player/state",
+        headers={**SPECTATOR_HEADER, "X-Seat-Token": joined["seat_token"]},
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -405,8 +414,8 @@ def test_player_act_fold(client: TestClient) -> None:
     j1 = client.post(f"/api/player/join/{game_id}", headers=SPECTATOR_HEADER).json()
     j2 = client.post(f"/api/player/join/{game_id}", headers=SPECTATOR_HEADER).json()
     state = client.get(
-        f"/api/player/state?seat_token={j1['seat_token']}",
-        headers=SPECTATOR_HEADER,
+        "/api/player/state",
+        headers={**SPECTATOR_HEADER, "X-Seat-Token": j1["seat_token"]},
     ).json()
     actor_tok = (
         j1["seat_token"]

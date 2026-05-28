@@ -119,9 +119,11 @@ export async function joinSeat(
 }
 
 export async function getPlayerState(seatToken: string): Promise<PlayerView> {
-  const r = await apiFetch(
-    `/api/player/state?seat_token=${encodeURIComponent(seatToken)}`,
-  );
+  // Seat tokens are secrets — keep them out of the URL (access logs,
+  // browser history, Referer) by sending in a header.
+  const r = await apiFetch("/api/player/state", {
+    headers: { "X-Seat-Token": seatToken },
+  });
   if (!r.ok) {
     throw new ApiError(r.status, `player state failed (${r.status})`);
   }
