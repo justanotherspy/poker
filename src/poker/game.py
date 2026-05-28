@@ -333,7 +333,9 @@ class GameState:
     def get_view(self, seat_id: int) -> TableView:
         s = self._state
         seat_idx = seat_id - 1
-        hole_cards = [repr(c) for c in s.hole_cards[seat_idx]]
+        # Reconstruct from the log rather than reading s.hole_cards: at
+        # showdown the HAND_KILLING automation clears the losing seat's cards.
+        hole_cards = self._current_hand_hole_cards()[seat_idx]
         board = self._board()
         pot = self._pot()
         stacks = {i + 1: stack for i, stack in enumerate(s.stacks)}
@@ -386,12 +388,19 @@ class GameState:
         actor = (s.actor_index + 1) if s.actor_index is not None else None
         dealer_idx = _dealer_index(n, self.sb_idx)
 
+        # Reconstruct hole cards and folds from the log: at showdown the
+        # HAND_KILLING automation clears the losing seats' cards and flips
+        # their status, which would otherwise make showdown losers look like
+        # folders with hidden cards.
+        holes_by_seat = self._current_hand_hole_cards()
+        folded_seats = self._folded_seats()
+
         seats: list[SpectatorSeat] = []
         winner_names: list[str] = []
         for i in range(n):
             seat_id = i + 1
-            hole = [repr(c) for c in s.hole_cards[i]]
-            folded = not s.statuses[i]
+            hole = holes_by_seat[i]
+            folded = seat_id in folded_seats
             stack = int(s.stacks[i])
             won_delta = stack - int(s.starting_stacks[i])
             won_amount = won_delta if (ended and won_delta > 0) else None
@@ -476,6 +485,44 @@ class GameState:
             if self._action_log[i].get("type") == "hand_break":
                 return self._action_log[i + 1 :]
         return list(self._action_log)
+
+    def _current_hand_hole_cards(self) -> list[list[str]]:
+        """Reconstruct each seat's hole cards for the current hand from the
+        action log.
+
+        We can't read these from the live pokerkit state at showdown: the
+        HAND_KILLING automation mucks losing hands, clearing their
+        `hole_cards` (and flipping `statuses`). The deal is round-robin, so
+        seat `i` (0-indexed) holds the dealt cards at positions `i` and
+        `i + seat_count`.
+        """
+        dealt = [
+            str(e["card"])
+            for e in self._current_hand_actions()
+            if e.get("type") == "deal_hole"
+        ]
+        n = self.seat_count
+        holes: list[list[str]] = []
+        for i in range(n):
+            cards: list[str] = []
+            if i < len(dealt):
+                cards.append(dealt[i])
+            if i + n < len(dealt):
+                cards.append(dealt[i + n])
+            holes.append(cards)
+        return holes
+
+    def _folded_seats(self) -> set[int]:
+        """1-indexed seats that folded this hand, from the action log.
+
+        Distinct from `not statuses[i]`: a player whose hand was killed at
+        showdown also has a falsy status but did not fold.
+        """
+        return {
+            int(e["seat"])
+            for e in self._current_hand_actions()
+            if e.get("type") == "fold"
+        }
 
     def _build_current_hand_history(self) -> list[HistoryEntry]:
         action_types = {"fold", "call", "check", "bet", "raise"}
@@ -579,8 +626,12 @@ class GameState:
                 raise ValueError(f"Cannot {action} now.")
             call_amt = s.checking_or_calling_amount
             s.check_or_call()
+            # Record what actually happened, not what the client asked for:
+            # a "call" with nothing owed is a check, and vice versa. Keeps the
+            # action log / history accurate for misbehaving clients.
+            actual = "check" if call_amt == 0 else "call"
             verb = "checks" if call_amt == 0 else "calls"
-            self._action_log.append({"type": action, "seat": seat_id})
+            self._action_log.append({"type": actual, "seat": seat_id})
             result = f"Seat {seat_id} {verb}."
         elif action in ("raise", "bet"):
             if amount is None:

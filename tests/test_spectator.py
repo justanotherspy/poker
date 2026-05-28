@@ -153,6 +153,71 @@ def test_fold_sets_winner_won_amount_positive() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Showdown reveal — losers must NOT be reported as folded, and must keep
+# their hole cards + hand rank. PokerKit's HAND_KILLING automation mucks
+# losing hands (clears hole_cards, flips status); the view must reconstruct
+# from the action log so the showdown reveal still works.
+# ---------------------------------------------------------------------------
+
+
+def _checkdown_to_showdown(g: GameState) -> None:
+    for _ in range(8):  # at most 2 actions/street * 4 streets
+        v = g.get_view(1)
+        a = v.current_actor
+        if a is None:
+            break
+        if g.get_view(a).to_call > 0:
+            g.apply_action(a, "call")
+        else:
+            g.apply_action(a, "check")
+    while g.needs_showdown():
+        g.advance_showdown()
+
+
+def test_showdown_loser_not_marked_folded() -> None:
+    g = create_game(seat_count=2, starting_stack=1000)
+    _checkdown_to_showdown(g)
+    sv = g.get_spectator_view()
+    assert sv.phase == "ended"
+    # Nobody folded in a checkdown, so no seat should be flagged folded.
+    assert [s.folded for s in sv.seats] == [False, False]
+
+
+def test_showdown_reveals_all_hole_cards_and_ranks() -> None:
+    g = create_game(seat_count=2, starting_stack=1000)
+    _checkdown_to_showdown(g)
+    sv = g.get_spectator_view()
+    for seat in sv.seats:
+        assert len(seat.hole_cards) == 2
+        assert seat.shows_cards is True
+        assert seat.hand_rank is not None
+
+
+def test_showdown_loser_keeps_own_hole_cards_in_player_view() -> None:
+    # A player who lost a showdown must still see their own cards (pokerkit
+    # would have cleared them on the live state).
+    g = create_game(seat_count=2, starting_stack=1000)
+    _checkdown_to_showdown(g)
+    for seat_id in (1, 2):
+        assert len(g.get_view(seat_id).hole_cards) == 2
+
+
+def test_allin_showdown_loser_revealed() -> None:
+    g = create_game(seat_count=2, starting_stack=1000)
+    a = _actor(g)
+    g.apply_action(a, "raise", 1000)
+    g.apply_action(_actor(g), "call")
+    while g.needs_showdown():
+        g.advance_showdown()
+    sv = g.get_spectator_view()
+    assert sv.phase == "ended"
+    # Both went to showdown all-in; neither folded, both reveal.
+    assert all(not s.folded for s in sv.seats)
+    assert all(len(s.hole_cards) == 2 for s in sv.seats)
+    assert all(s.shows_cards for s in sv.seats)
+
+
+# ---------------------------------------------------------------------------
 # Chat log — round-trip and append.
 # ---------------------------------------------------------------------------
 

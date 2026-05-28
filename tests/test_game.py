@@ -268,6 +268,23 @@ def test_raise_without_amount_raises() -> None:
         g.apply_action(actor, "raise")
 
 
+def test_call_with_nothing_owed_is_recorded_as_check() -> None:
+    # An agent that sends "call" when no chips are owed should be recorded
+    # (and reported) as a check, not a call.
+    g = create_game(seat_count=2, starting_stack=1000)
+    actor = _get_actor(g)
+    # SB calls the BB so the BB now faces no outstanding bet.
+    if g.get_view(actor).to_call > 0:
+        g.apply_action(actor, "call")
+    bb = _get_actor(g)
+    assert g.get_view(bb).to_call == 0
+    result = g.apply_action(bb, "call")  # client mislabels a check as a call
+    assert "checks" in result
+    sv = g.get_spectator_view()
+    bb_seat = next(s for s in sv.seats if s.seat_id == bb)
+    assert bb_seat.last_action == "checks"
+
+
 # ---------------------------------------------------------------------------
 # Multi-hand — start_next_hand carries stacks, rotates button.
 # ---------------------------------------------------------------------------
