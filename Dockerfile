@@ -14,7 +14,7 @@ RUN bun run build
 
 # Stage 3: Python runtime
 FROM python:3.14.7-slim@sha256:66cb9041a9e6dffe5d2043e8032f5403f66e22db70cb7023b83d61a9cc104c80
-COPY --from=ghcr.io/astral-sh/uv:latest@sha256:069a51314a7bb6031777a9273205fe1b0b19e914ef418207d1338b268df641dd /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:latest@sha256:2d890623d310b57771ce840f0da5eed5fc6d657da05ffaa45d82797b53fa3abc /uv /usr/local/bin/uv
 RUN groupadd --system poker && useradd --system --gid poker --create-home poker \
     && install -d -o poker -g poker /app
 WORKDIR /app
