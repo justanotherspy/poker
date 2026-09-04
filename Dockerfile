@@ -1,11 +1,11 @@
 # Stage 1: install frontend dependencies
-FROM oven/bun:1@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6 AS deps
+FROM oven/bun:1@sha256:9e123d5fc069e29d519fd4c981afb61b8542ac80274771961136db1e4538d53e AS deps
 WORKDIR /app
 COPY frontend/package.json frontend/bun.lock* ./
 RUN bun install --frozen-lockfile
 
 # Stage 2: build Next.js static export
-FROM oven/bun:1@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6 AS frontend-build
+FROM oven/bun:1@sha256:9e123d5fc069e29d519fd4c981afb61b8542ac80274771961136db1e4538d53e AS frontend-build
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
