@@ -18,6 +18,7 @@ dev = [
     "mypy",
     "ruff",
     "fakeredis>=2.36.1",
+    "httpx2>=2.13.1",
 ]
 
 [build-system]
