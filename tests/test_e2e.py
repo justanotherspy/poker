@@ -6,7 +6,7 @@ import time
 from collections.abc import Generator
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 import uvicorn
 from fastmcp import Client
@@ -42,7 +42,7 @@ def server_url() -> Generator[str, None, None]:
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         try:
-            httpx.get(f"{_BASE_URL}/api/health", timeout=1)
+            httpx2.get(f"{_BASE_URL}/api/health", timeout=1)
             break
         except Exception:
             time.sleep(0.05)
@@ -55,7 +55,7 @@ def server_url() -> Generator[str, None, None]:
 
 
 def _create_game(seat_count: int = 2) -> str:
-    resp = httpx.post(
+    resp = httpx2.post(
         f"{_BASE_URL}/api/games",
         headers=_SPEC_HEADER,
         json={"seat_count": seat_count, "starting_stack": 1000},
@@ -71,13 +71,13 @@ def _create_game(seat_count: int = 2) -> str:
 
 @pytest.mark.e2e
 def test_unauthenticated_rejected(server_url: str) -> None:
-    resp = httpx.post(server_url, json={})
+    resp = httpx2.post(server_url, json={})
     assert resp.status_code == 401
 
 
 @pytest.mark.e2e
 def test_invalid_token_rejected(server_url: str) -> None:
-    resp = httpx.post(server_url, json={}, headers={"Authorization": "Bearer wrong"})
+    resp = httpx2.post(server_url, json={}, headers={"Authorization": "Bearer wrong"})
     assert resp.status_code == 401
 
 
@@ -201,14 +201,14 @@ async def test_mcp_act_invalid_token(server_url: str) -> None:
 @pytest.mark.e2e
 def test_spectate_state_requires_password(server_url: str) -> None:
     gid = _create_game(seat_count=2)
-    resp = httpx.get(f"{_BASE_URL}/api/spectate/state/{gid}")
+    resp = httpx2.get(f"{_BASE_URL}/api/spectate/state/{gid}")
     assert resp.status_code == 401
 
 
 @pytest.mark.e2e
 def test_spectate_state_with_password(server_url: str) -> None:
     gid = _create_game(seat_count=2)
-    resp = httpx.get(
+    resp = httpx2.get(
         f"{_BASE_URL}/api/spectate/state/{gid}",
         headers=_SPEC_HEADER,
     )
