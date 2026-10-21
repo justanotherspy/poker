@@ -13,7 +13,7 @@ COPY frontend/ ./
 RUN bun run build
 
 # Stage 3: Python runtime
-FROM python:3.15.0-slim@sha256:f2dbcc4d0a7ff47b0f35724b56f778ccf0460eb119542f15444ab61ddc416435
+FROM python:3.15.0-slim@sha256:f5b92f2a669a4c347044f29367f31983280b648250ca94dea66f98c53bc87e58
 COPY --from=ghcr.io/astral-sh/uv:latest@sha256:9f130421e930bfbdc563c00740466603f8723158e90297d07957c2294640262b /uv /usr/local/bin/uv
 RUN groupadd --system poker && useradd --system --gid poker --create-home poker \
     && install -d -o poker -g poker /app
